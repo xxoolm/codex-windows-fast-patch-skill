@@ -59,9 +59,138 @@ function Invoke-Checked {
   }
 }
 
+function Write-Utf8NoBom {
+  param(
+    [string]$Path,
+    [string]$Content
+  )
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
+  $encoding = [System.Text.UTF8Encoding]::new($false)
+  [System.IO.File]::WriteAllText($Path, $Content, $encoding)
+}
+
+function Set-TomlTable {
+  param(
+    [string]$ConfigPath,
+    [string]$Header,
+    [hashtable]$Values
+  )
+
+  $content = ''
+  if (Test-Path -LiteralPath $ConfigPath) {
+    $content = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
+  }
+
+  $lines = foreach ($key in ($Values.Keys | Sort-Object)) {
+    $value = $Values[$key]
+    if ($value -is [bool]) {
+      "$key = $($value.ToString().ToLowerInvariant())"
+    } else {
+      $escaped = [string]$value -replace "'", "''"
+      "$key = '$escaped'"
+    }
+  }
+  $body = ($lines -join "`r`n") + "`r`n"
+  $escapedHeader = [regex]::Escape($Header)
+  $pattern = "(?ms)^$escapedHeader\s*\r?\n(?:(?!^\[).)*"
+  $replacement = "$Header`r`n$body"
+
+  if ([regex]::IsMatch($content, $pattern)) {
+    $content = [regex]::Replace($content, $pattern, $replacement, 1)
+  } else {
+    if ($content.Length -gt 0 -and -not $content.EndsWith("`n")) {
+      $content += "`r`n"
+    }
+    if ($content.Length -gt 0 -and -not $content.EndsWith("`r`n`r`n")) {
+      $content += "`r`n"
+    }
+    $content += $replacement
+  }
+
+  Write-Utf8NoBom $ConfigPath $content
+}
+
+function Test-TomlSyntax {
+  param([string]$ConfigPath)
+
+  $python = Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $python) {
+    Write-Log 'warning: python not found; skipping tomllib syntax validation'
+    return
+  }
+
+  $script = @'
+import pathlib
+import sys
+import tomllib
+
+path = pathlib.Path(sys.argv[1])
+tomllib.loads(path.read_text(encoding="utf-8"))
+'@
+  $temp = Join-Path $env:TEMP ('codex-toml-validate-' + [guid]::NewGuid().ToString('N') + '.py')
+  try {
+    Write-Utf8NoBom $temp $script
+    & $python.Source $temp $ConfigPath
+    if ($LASTEXITCODE -ne 0) {
+      throw "tomllib validation failed for $ConfigPath"
+    }
+  } finally {
+    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Repair-LocalMarketplaceManifestLayout {
+  param([string]$Path)
+
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return
+  }
+
+  $supportedManifest = Join-Path $Path '.agents\plugins\marketplace.json'
+  $legacyManifest = Join-Path $Path 'marketplace.json'
+  if ((Test-Path -LiteralPath $supportedManifest) -or -not (Test-Path -LiteralPath $legacyManifest)) {
+    return
+  }
+
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $supportedManifest) | Out-Null
+  Copy-Item -LiteralPath $legacyManifest -Destination $supportedManifest -Force
+  Write-Log "repaired marketplace manifest layout: $supportedManifest"
+}
+
+function Repair-KnownLocalMarketplaceLayouts {
+  param([string[]]$Paths)
+
+  foreach ($candidate in ($Paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+    Repair-LocalMarketplaceManifestLayout $candidate
+  }
+}
+
+function Invoke-ComputerUseInstaller {
+  param(
+    [string]$Stage,
+    [switch]$VerifyOnly
+  )
+
+  if (-not (Test-Path -LiteralPath $ComputerUseScript)) {
+    throw "Computer Use installer not found: $ComputerUseScript"
+  }
+
+  $args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ComputerUseScript)
+  $mode = 'install'
+  if ($VerifyOnly) {
+    $args += '-VerifyOnly'
+    $mode = 'verify/repair'
+  }
+
+  Write-Log "Computer Use ${mode}: $Stage"
+  Invoke-Checked 'powershell' $args "Computer Use $mode failed"
+  $env:CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE = '1'
+}
+
 function Register-LocalMarketplace {
   param([string]$Path)
 
+  Repair-LocalMarketplaceManifestLayout $Path
   $manifest = Join-Path $Path '.agents\plugins\marketplace.json'
   if (-not (Test-Path -LiteralPath $manifest)) {
     Write-Log "warning: local marketplace not found: $manifest"
@@ -70,27 +199,19 @@ function Register-LocalMarketplace {
   }
 
   $configPath = Join-Path $env:USERPROFILE '.codex\config.toml'
-  $alreadyConfigured = $false
-  if (Test-Path -LiteralPath $configPath) {
-    $alreadyConfigured = Select-String -LiteralPath $configPath -Pattern '^\[marketplaces\.openai-curated-local\]' -Quiet
+  if ((Test-Path -LiteralPath $configPath) -and -not (Test-Path -LiteralPath "$configPath.local-marketplace.bak")) {
+    Copy-Item -LiteralPath $configPath -Destination "$configPath.local-marketplace.bak" -Force
   }
 
-  if ($alreadyConfigured) {
-    Write-Log 'local plugin marketplace already configured: openai-curated-local'
-    return
+  $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
+  $source = '\\?\' + $resolvedPath
+  Set-TomlTable $configPath '[marketplaces.openai-curated-local]' @{
+    last_updated = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+    source = $source
+    source_type = 'local'
   }
-
-  $codex = Find-CodexCli
-  if (-not $codex) {
-    Write-Log 'warning: codex CLI not found; cannot register local plugin marketplace'
-    return
-  }
-
-  Write-Log "registering local plugin marketplace: $Path"
-  & $codex plugin marketplace add $Path
-  if ($LASTEXITCODE -ne 0) {
-    throw "codex plugin marketplace add failed (exit code $LASTEXITCODE)"
-  }
+  Test-TomlSyntax $configPath
+  Write-Log "local plugin marketplace configured: openai-curated-local -> $source"
 }
 
 function Show-Status {
@@ -107,21 +228,26 @@ function Show-Status {
   $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue | Select-Object -First 1
   Write-Log "makeappx.exe: $(if ($makeappx) { $makeappx.Source } else { '<missing>' })"
   Write-Log "signtool.exe: $(if ($signtool) { $signtool.Source } else { '<missing>' })"
+
+  $helper = Join-Path $env:USERPROFILE '.codex\plugins\cache\openai-bundled\computer-use\latest\node_modules\@oai\sky\dist\project\cua\sky_js\src\targets\windows\internal\helper_transport.js'
+  $userEnv = [Environment]::GetEnvironmentVariable('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE', 'User')
+  Write-Log "computer-use helper: $(if (Test-Path -LiteralPath $helper) { $helper } else { '<missing>' })"
+  Write-Log "computer-use user env: $(if ($userEnv) { $userEnv } else { '<missing>' })"
 }
 
 if (-not $SkipMarketplace) {
+  Repair-KnownLocalMarketplaceLayouts @(
+    $MarketplacePath,
+    (Join-Path $env:USERPROFILE '.codex\marketplaces\local-imagegen')
+  )
   Register-LocalMarketplace $MarketplacePath
 }
 
 if (-not $SkipComputerUse) {
-  if (-not (Test-Path -LiteralPath $ComputerUseScript)) {
-    throw "Computer Use installer not found: $ComputerUseScript"
-  }
   if ($DryRun) {
-    Invoke-Checked 'powershell' @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ComputerUseScript, '-VerifyOnly') 'Computer Use verification failed'
+    Invoke-ComputerUseInstaller -Stage 'preflight before MSIX dry run' -VerifyOnly
   } else {
-    Invoke-Checked 'powershell' @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ComputerUseScript) 'Computer Use installation failed'
-    $env:CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE = '1'
+    Invoke-ComputerUseInstaller -Stage 'preflight before MSIX patch'
   }
 }
 
@@ -162,6 +288,15 @@ Invoke-Checked 'powershell' (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Fil
 
 if (-not $SkipMarketplace) {
   Register-LocalMarketplace $MarketplacePath
+}
+
+if (-not $SkipComputerUse) {
+  if ($DryRun) {
+    Invoke-ComputerUseInstaller -Stage 'post-dry-run final verification' -VerifyOnly
+  } else {
+    Invoke-ComputerUseInstaller -Stage 'post-patch refresh after Codex startup'
+    Invoke-ComputerUseInstaller -Stage 'post-patch final verification' -VerifyOnly
+  }
 }
 
 Show-Status

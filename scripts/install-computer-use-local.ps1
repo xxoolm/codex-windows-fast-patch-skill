@@ -3,6 +3,7 @@ param(
   [string]$CodexHome = (Join-Path $env:USERPROFILE '.codex'),
   [string]$PluginVersion = '0.1.0-local',
   [switch]$VerifyOnly,
+  [switch]$StrictVerifyOnly,
   [switch]$SkipUserEnvironment
 )
 
@@ -38,6 +39,14 @@ function Resolve-OrCreateDirectory {
   return (Resolve-Path -LiteralPath $Path).Path
 }
 
+function Resolve-ExistingDirectory {
+  param([string]$Path)
+  if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+    throw "missing required directory: $Path"
+  }
+  return (Resolve-Path -LiteralPath $Path).Path
+}
+
 function Assert-UnderPath {
   param(
     [string]$Path,
@@ -48,6 +57,22 @@ function Assert-UnderPath {
   if (-not $full.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "refusing to modify path outside expected root: $full"
   }
+}
+
+function Remove-ReparsePointOrDirectory {
+  param([string]$Path)
+
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return
+  }
+
+  $item = Get-Item -LiteralPath $Path -Force
+  if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    [System.IO.Directory]::Delete($item.FullName)
+    return
+  }
+
+  Remove-Item -LiteralPath $item.FullName -Recurse -Force
 }
 
 function Set-TomlTable {
@@ -547,6 +572,188 @@ tomllib.loads(path.read_text(encoding="utf-8"))
   }
 }
 
+function Get-InstalledBundledMarketplaceRoot {
+  $pkg = Get-AppxPackage -Name OpenAI.Codex -ErrorAction SilentlyContinue |
+    Sort-Object Version -Descending |
+    Select-Object -First 1
+  if (-not $pkg) {
+    throw 'OpenAI.Codex package is not installed; cannot sync openai-bundled marketplace'
+  }
+
+  $root = Join-Path $pkg.InstallLocation 'app\resources\plugins\openai-bundled'
+  $manifestPath = Join-Path $root '.agents\plugins\marketplace.json'
+  if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+    throw "installed openai-bundled marketplace manifest not found: $manifestPath"
+  }
+
+  return $root
+}
+
+function Sync-BundledMarketplaceFromInstalledApp {
+  param([string]$MarketplaceRoot)
+
+  $sourceRoot = Get-InstalledBundledMarketplaceRoot
+  $parent = Split-Path -Parent $MarketplaceRoot
+  Resolve-OrCreateDirectory $parent | Out-Null
+  Assert-UnderPath $MarketplaceRoot $parent
+
+  Write-Log "syncing installed openai-bundled marketplace: $sourceRoot -> $MarketplaceRoot"
+  & robocopy.exe $sourceRoot $MarketplaceRoot /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+  if ($LASTEXITCODE -gt 7) {
+    throw "robocopy failed while syncing openai-bundled marketplace (exit code $LASTEXITCODE)"
+  }
+}
+
+function Test-BundledMarketplaceMirror {
+  param([string]$MarketplaceRoot)
+
+  $sourceRoot = Get-InstalledBundledMarketplaceRoot
+  $sourceManifestPath = Join-Path $sourceRoot '.agents\plugins\marketplace.json'
+  $localManifestPath = Join-Path $MarketplaceRoot '.agents\plugins\marketplace.json'
+  if (-not (Test-Path -LiteralPath $localManifestPath -PathType Leaf)) {
+    throw "local openai-bundled marketplace manifest not found: $localManifestPath"
+  }
+
+  $sourceManifest = Get-Content -Raw -LiteralPath $sourceManifestPath | ConvertFrom-Json
+  $localManifest = Get-Content -Raw -LiteralPath $localManifestPath | ConvertFrom-Json
+  $localEntries = @{}
+  foreach ($entry in @($localManifest.plugins)) {
+    $localEntries[[string]$entry.name] = $entry
+  }
+
+  foreach ($sourceEntry in @($sourceManifest.plugins)) {
+    $name = [string]$sourceEntry.name
+    if (-not $localEntries.ContainsKey($name)) {
+      throw "local openai-bundled marketplace is missing installed plugin entry: $name"
+    }
+
+    $localPath = [string]$localEntries[$name].source.path
+    $relativePath = $localPath -replace '^[.][\\/]', ''
+    $pluginJson = Join-Path (Join-Path $MarketplaceRoot $relativePath) '.codex-plugin\plugin.json'
+    if (-not (Test-Path -LiteralPath $pluginJson -PathType Leaf)) {
+      throw "local openai-bundled plugin files are missing for ${name}: $pluginJson"
+    }
+  }
+}
+
+function Test-CodexConfig {
+  param(
+    [string]$ConfigPath,
+    [string]$MarketplaceRoot
+  )
+
+  if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+    throw "missing Codex config: $ConfigPath"
+  }
+
+  Test-TomlSyntax $ConfigPath
+  $expectedSource = '\\?\' + $MarketplaceRoot
+  $python = Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $python) {
+    $content = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
+    if ($content -notmatch '(?ms)^\[marketplaces\.openai-bundled\]\s*\r?\n(?:(?!^\[).)*source_type\s*=\s*[''"]local[''"]') {
+      throw 'config.toml is missing marketplaces.openai-bundled source_type=local'
+    }
+    if ($content -notmatch '(?ms)^\[plugins\."computer-use@openai-bundled"\]\s*\r?\n(?:(?!^\[).)*enabled\s*=\s*true') {
+      throw 'config.toml is missing plugins."computer-use@openai-bundled".enabled=true'
+    }
+    Write-Log 'warning: python not found; config source path was not semantically validated'
+    return
+  }
+
+  $script = @'
+import pathlib
+import sys
+import tomllib
+
+config_path = pathlib.Path(sys.argv[1])
+expected_source = sys.argv[2]
+data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+errors = []
+
+marketplace = data.get("marketplaces", {}).get("openai-bundled")
+if not isinstance(marketplace, dict):
+    errors.append("missing [marketplaces.openai-bundled]")
+else:
+    if marketplace.get("source_type") != "local":
+        errors.append("marketplaces.openai-bundled.source_type must be local")
+    if marketplace.get("source") != expected_source:
+        errors.append("marketplaces.openai-bundled.source does not point at the local bundled marketplace")
+
+plugin = data.get("plugins", {}).get("computer-use@openai-bundled")
+if not isinstance(plugin, dict):
+    errors.append('missing [plugins."computer-use@openai-bundled"]')
+elif plugin.get("enabled") is not True:
+    errors.append('plugins."computer-use@openai-bundled".enabled must be true')
+
+if errors:
+    for error in errors:
+        print(error, file=sys.stderr)
+    raise SystemExit(1)
+'@
+  $temp = Join-Path $env:TEMP ('codex-config-validate-' + [guid]::NewGuid().ToString('N') + '.py')
+  try {
+    Write-Utf8NoBom $temp $script
+    & $python.Source $temp $ConfigPath $expectedSource
+    if ($LASTEXITCODE -ne 0) {
+      throw "semantic config validation failed for $ConfigPath"
+    }
+  } finally {
+    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Test-HelperTransport {
+  param([string]$HelperTransportPath)
+
+  $node = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $node) {
+    throw 'node.exe not found; cannot verify local Computer Use helper transport'
+  }
+
+  $script = @'
+import { pathToFileURL } from "node:url";
+
+const modulePath = process.argv[2];
+const mod = await import(pathToFileURL(modulePath).href);
+if (typeof mod.WindowsHelperTransport !== "function") {
+  throw new Error("WindowsHelperTransport export is missing");
+}
+
+const transport = new mod.WindowsHelperTransport();
+try {
+  const info = await transport.request("screenInfo", {});
+  if (!info || typeof info.width !== "number" || typeof info.height !== "number" || info.width <= 0 || info.height <= 0) {
+    throw new Error(`invalid screenInfo response: ${JSON.stringify(info)}`);
+  }
+
+  const screenshot = await transport.request("screenshot", {});
+  if (!screenshot || screenshot.mimeType !== "image/png" || typeof screenshot.data !== "string" || screenshot.data.length < 100) {
+    throw new Error("invalid screenshot response");
+  }
+
+  console.log(JSON.stringify({ ok: true, width: info.width, height: info.height, screenshotBytesApprox: Math.floor(screenshot.data.length * 3 / 4) }));
+} finally {
+  if (typeof transport.close === "function") {
+    await transport.close();
+  }
+}
+'@
+  $temp = Join-Path $env:TEMP ('codex-computer-use-verify-' + [guid]::NewGuid().ToString('N') + '.mjs')
+  try {
+    Write-Utf8NoBom $temp $script
+    $output = & $node.Source $temp $HelperTransportPath
+    if ($LASTEXITCODE -ne 0) {
+      throw "Computer Use helper transport verification failed for $HelperTransportPath"
+    }
+    if ($output) {
+      Write-Log "helper transport ok: $output"
+    }
+  } finally {
+    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+  }
+}
+
 function Install-ComputerUse {
   $codexHomeResolved = Resolve-OrCreateDirectory $CodexHome
   $marketplaceRoot = Join-Path $codexHomeResolved '.tmp\bundled-marketplaces\openai-bundled'
@@ -561,6 +768,7 @@ function Install-ComputerUse {
   Assert-UnderPath $cacheVersionRoot $cacheRoot
   Assert-UnderPath $latestPath $cacheRoot
 
+  Sync-BundledMarketplaceFromInstalledApp $marketplaceRoot
   Write-PluginTree $pluginSourceRoot
   Write-PluginTree $cacheVersionRoot
   Update-BundledMarketplaceManifest $marketplaceRoot
@@ -568,7 +776,7 @@ function Install-ComputerUse {
   Enable-UserEnvironment
 
   if (Test-Path -LiteralPath $latestPath) {
-    Remove-Item -LiteralPath $latestPath -Recurse -Force
+    Remove-ReparsePointOrDirectory $latestPath
   }
   New-Item -ItemType Junction -Path $latestPath -Target $cacheVersionRoot | Out-Null
 
@@ -578,17 +786,18 @@ function Install-ComputerUse {
 }
 
 function Test-ComputerUse {
-  $codexHomeResolved = Resolve-OrCreateDirectory $CodexHome
+  $codexHomeResolved = Resolve-ExistingDirectory $CodexHome
   $marketplaceRoot = Join-Path $codexHomeResolved '.tmp\bundled-marketplaces\openai-bundled'
   $manifestPath = Join-Path $marketplaceRoot '.agents\plugins\marketplace.json'
   $cacheLatest = Join-Path $codexHomeResolved 'plugins\cache\openai-bundled\computer-use\latest'
+  $helperTransportPath = Join-Path $cacheLatest 'node_modules\@oai\sky\dist\project\cua\sky_js\src\targets\windows\internal\helper_transport.js'
   $required = @(
     $manifestPath,
     (Join-Path $marketplaceRoot 'plugins\computer-use\.codex-plugin\plugin.json'),
     (Join-Path $cacheLatest '.codex-plugin\plugin.json'),
     (Join-Path $cacheLatest 'node_modules\@oai\sky\package.json'),
     (Join-Path $cacheLatest 'node_modules\@oai\sky\bin\windows\codex-computer-use.exe'),
-    (Join-Path $cacheLatest 'node_modules\@oai\sky\dist\project\cua\sky_js\src\targets\windows\internal\helper_transport.js')
+    $helperTransportPath
   )
 
   foreach ($path in $required) {
@@ -606,18 +815,34 @@ function Test-ComputerUse {
     throw 'computer-use marketplace entry does not point to ./plugins/computer-use'
   }
 
+  Test-BundledMarketplaceMirror $marketplaceRoot
+
   $userEnv = [Environment]::GetEnvironmentVariable('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE', 'User')
   if ($userEnv -ne '1') {
     throw 'CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE is not enabled for the current user'
   }
 
-  Test-TomlSyntax (Join-Path $codexHomeResolved 'config.toml')
+  Test-CodexConfig (Join-Path $codexHomeResolved 'config.toml') $marketplaceRoot
+  Test-HelperTransport $helperTransportPath
   Write-Log 'verification ok'
 }
 
-if ($VerifyOnly) {
+if ($StrictVerifyOnly) {
   Test-ComputerUse
   exit 0
+}
+
+if ($VerifyOnly) {
+  try {
+    Test-ComputerUse
+    exit 0
+  } catch {
+    Write-Log "verification failed: $($_.Exception.Message)"
+    Write-Log 'repairing local Computer Use plugin and retrying verification'
+    Install-ComputerUse
+    Test-ComputerUse
+    exit 0
+  }
 }
 
 Install-ComputerUse

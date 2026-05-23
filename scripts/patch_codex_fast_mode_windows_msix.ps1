@@ -18,6 +18,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $LogPrefix = '[codex-msix-patch-win]'
+$WindowsSdkBuildToolsPackageId = 'microsoft.windows.sdk.buildtools'
+$WindowsSdkBuildToolsVersion = '10.0.26100.7705'
+$WindowsSdkInstallTimeoutSeconds = 300
+$script:InstalledWindowsSdkViaNuGet = $false
+$script:InstalledWindowsSdkViaWinget = $false
 
 function Write-Log {
   param([string]$Message)
@@ -135,7 +140,11 @@ function Get-PackageShortId {
 
 function Find-WindowsSdkTool {
   param([string]$ToolName)
+  $nugetTempRoot = Join-Path $env:TEMP 'codex-windows-sdk-buildtools'
+  $nugetUserRoot = Join-Path $env:USERPROFILE ".nuget\packages\$WindowsSdkBuildToolsPackageId"
   $roots = @(
+    $nugetTempRoot,
+    $nugetUserRoot,
     (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'),
     (Join-Path $env:ProgramFiles 'Windows Kits\10\bin')
   ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
@@ -151,16 +160,101 @@ function Find-WindowsSdkTool {
   return $null
 }
 
+function Stop-ProcessTree {
+  param([int]$ProcessId)
+  $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ProcessId" -ErrorAction SilentlyContinue)
+  foreach ($child in $children) {
+    Stop-ProcessTree -ProcessId ([int]$child.ProcessId)
+  }
+  Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+}
+
+function Invoke-ProcessWithTimeout {
+  param(
+    [string]$FilePath,
+    [string[]]$ArgumentList,
+    [int]$TimeoutSeconds,
+    [string]$Description
+  )
+
+  Write-Log "$Description (timeout ${TimeoutSeconds}s)"
+  $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -WindowStyle Hidden
+  if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+    Stop-ProcessTree -ProcessId $process.Id
+    Fail "$Description timed out after ${TimeoutSeconds}s"
+  }
+  if ($process.ExitCode -ne 0) {
+    Fail "$Description failed with exit code $($process.ExitCode)"
+  }
+}
+
+function Install-WindowsSdkBuildToolsViaNuGet {
+  $cacheRoot = Join-Path $env:TEMP 'codex-windows-sdk-buildtools'
+  $packageRoot = Join-Path $cacheRoot $WindowsSdkBuildToolsVersion
+  $x64Root = Join-Path $packageRoot 'bin'
+  if ((Find-WindowsSdkTool 'makeappx.exe') -and (Find-WindowsSdkTool 'signtool.exe')) {
+    return
+  }
+
+  if (Test-Path -LiteralPath $packageRoot) {
+    Remove-Item -LiteralPath $packageRoot -Recurse -Force
+  }
+  New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
+  New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+
+  $packageId = $WindowsSdkBuildToolsPackageId.ToLowerInvariant()
+  $nupkg = Join-Path $cacheRoot "$packageId.$WindowsSdkBuildToolsVersion.nupkg"
+  $zip = Join-Path $cacheRoot "$packageId.$WindowsSdkBuildToolsVersion.zip"
+  $url = "https://api.nuget.org/v3-flatcontainer/$packageId/$WindowsSdkBuildToolsVersion/$packageId.$WindowsSdkBuildToolsVersion.nupkg"
+
+  Write-Log "downloading Windows SDK BuildTools from NuGet: $WindowsSdkBuildToolsVersion"
+  $oldProgress = $ProgressPreference
+  try {
+    $ProgressPreference = 'SilentlyContinue'
+    Invoke-WebRequest -Uri $url -OutFile $nupkg -UseBasicParsing -TimeoutSec 120
+  } finally {
+    $ProgressPreference = $oldProgress
+  }
+
+  Copy-Item -LiteralPath $nupkg -Destination $zip -Force
+  Expand-Archive -LiteralPath $zip -DestinationPath $packageRoot -Force
+  Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+
+  $makeappx = Get-ChildItem -LiteralPath $x64Root -Recurse -Filter 'makeappx.exe' -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -match '\\x64\\' } |
+    Select-Object -First 1
+  $signtool = Get-ChildItem -LiteralPath $x64Root -Recurse -Filter 'signtool.exe' -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -match '\\x64\\' } |
+    Select-Object -First 1
+
+  if (-not $makeappx -or -not $signtool) {
+    Fail "NuGet Windows SDK BuildTools did not provide required x64 MSIX tools: $packageRoot"
+  }
+  $script:InstalledWindowsSdkViaNuGet = $true
+  Write-Log "using NuGet Windows SDK BuildTools: $packageRoot"
+}
+
 function Install-WindowsSdkPrerequisites {
-  Write-Log 'installing Windows SDK via winget'
+  try {
+    Install-WindowsSdkBuildToolsViaNuGet
+    if ((Find-WindowsSdkTool 'makeappx.exe') -and (Find-WindowsSdkTool 'signtool.exe')) {
+      return
+    }
+  } catch {
+    Write-Log "warning: NuGet Windows SDK BuildTools install failed: $($_.Exception.Message)"
+  }
+
+  Write-Log 'installing Windows SDK via winget fallback'
   $winget = Get-Command winget.exe -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $winget) {
-    Fail 'winget.exe not found; install Windows SDK manually or install App Installer first'
+    Fail 'winget.exe not found and NuGet Windows SDK BuildTools install failed; install Windows SDK manually or install App Installer first'
   }
-  & $winget.Source install --id Microsoft.WindowsSDK.10.0.26100 -e --source winget --accept-source-agreements --accept-package-agreements | Out-Host
-  if ($LASTEXITCODE -ne 0) {
-    Fail "winget Windows SDK install failed with exit code $LASTEXITCODE"
-  }
+  Invoke-ProcessWithTimeout `
+    -FilePath $winget.Source `
+    -ArgumentList @('install', '--id', 'Microsoft.WindowsSDK.10.0.26100', '-e', '--source', 'winget', '--accept-source-agreements', '--accept-package-agreements') `
+    -TimeoutSeconds $WindowsSdkInstallTimeoutSeconds `
+    -Description 'winget Windows SDK install'
+  $script:InstalledWindowsSdkViaWinget = $true
 }
 
 function Require-WindowsSdkTool {
@@ -352,49 +446,62 @@ process.stdout.write(changed ? 'patched' : 'already-patched');
 
   Set-Content -LiteralPath $goalPatcherPath -Encoding UTF8 -Value @'
 const fs = require('node:fs');
-const file = process.argv[2];
-const text = fs.readFileSync(file, 'utf8');
+const [composerFile, slashFileArg] = process.argv.slice(2);
+const slashFile = slashFileArg || composerFile;
+const composerText = fs.readFileSync(composerFile, 'utf8');
+const slashText = fs.readFileSync(slashFile, 'utf8');
 
 const goalPatchedRe = /(\w+)=([A-Za-z_$][\w$]*)!==`cloud`(?:&&!?\w+)?,(\w+)=([^,]+),/;
+const currentSplitGoalPatchedRe = /(\w+)=([A-Za-z_$][\w$]*)!==`cloud`&&!\w+,(\w+)=([^,]+),(\w+)=([^,]+),/;
 const goalOriginalRe = /(\w+)=([A-Za-z_$][\w$]*)\(`3074100722`\)&&([A-Za-z_$][\w$]*)\((\w+)\?\.config,`goals`\)===!0&&(\w+)!==`cloud`,(\w+)=([^,]+),/;
 const currentGoalOriginalRe = /(\w+)=([A-Za-z_$][\w$]*)\(`3074100722`\)&&([A-Za-z_$][\w$]*)\((\w+)\?\.config,`goals`\)===!0&&(\w+)!==`cloud`(&&!\w+)?,(\w+)=([^,]+),/;
 const slashOriginal = 'function Nx(e,t){let n=t.trim();if(n.length===0)return e;let r=new Map;return e.forEach(e=>{let t=e.group??null;r.has(t)||r.set(t,r.size)}),(0,Tx.default)(e.map(e=>({command:e,score:zi(e.title,n)})).filter(e=>e.score>0),[e=>r.get(e.command.group??null)??2**53-1,e=>-e.score,e=>e.command.title]).map(e=>e.command)}';
 const slashPatched = 'function Nx(e,t){let n=t.trim().replace(/^\\/+/,"");if(n.length===0)return e;let r=new Map;return e.forEach(e=>{let t=e.group??null;r.has(t)||r.set(t,r.size)}),(0,Tx.default)(e.map(e=>({command:e,score:Math.max(zi(e.title,n),zi(e.id,n))})).filter(e=>e.score>0),[e=>r.get(e.command.group??null)??2**53-1,e=>-e.score,e=>e.command.title]).map(e=>e.command)}';
 const slashOriginalRe = /function (\w+)\(e,t\)\{let (\w+)=t\.trim\(\);if\(\2\.length===0\)return e;let (\w+)=new Map;return e\.forEach\(e=>\{let t=e\.group\?\?null;\3\.has\(t\)\|\|\3\.set\(t,\3\.size\)\}\),\(0,([A-Za-z_$][\w$]*)\.default\)\(e\.map\(e=>\(\{command:e,score:([A-Za-z_$][\w$]*)\(e\.title,\2\)\}\)\)\.filter\(e=>e\.score>0\),\[e=>\3\.get\(e\.command\.group\?\?null\)\?\?2\*\*53-1,e=>-e\.score,e=>e\.command\.title\]\)\.map\(e=>e\.command\)\}/;
 const slashPatchedRe = /score:Math\.max\([A-Za-z_$][\w$]*\(e\.title,\w+\),[A-Za-z_$][\w$]*\(e\.id,\w+\)\)/;
+const cmdkSlashRe = /cmdk-item/;
+const cmdkKeywordSearchRe = /keywords:\w+|keywords,\.\.\./;
+const goalCommandRe = /id:`goal`,title:[^,]+,description:[^,]+,requiresEmptyComposer:!1,[^}]*enabled:[^,]+/;
 
-let next = text;
-let changed = false;
-if (!next.includes(slashPatched) && !slashPatchedRe.test(next)) {
-  const slashMatch = next.match(slashOriginalRe);
+let nextComposer = composerText;
+let nextSlash = slashText;
+let changedComposer = false;
+let changedSlash = false;
+
+if (!nextSlash.includes(slashPatched) && !slashPatchedRe.test(nextSlash)) {
+  const slashMatch = nextSlash.match(slashOriginalRe);
   if (slashMatch) {
     const [, fn, queryVar, groupOrderVar, sortByVar, scoreFn] = slashMatch;
-    next = next.replace(slashOriginalRe, `function ${fn}(e,t){let ${queryVar}=t.trim().replace(/^\\/+/,"");if(${queryVar}.length===0)return e;let ${groupOrderVar}=new Map;return e.forEach(e=>{let t=e.group??null;${groupOrderVar}.has(t)||${groupOrderVar}.set(t,${groupOrderVar}.size)}),(0,${sortByVar}.default)(e.map(e=>({command:e,score:Math.max(${scoreFn}(e.title,${queryVar}),${scoreFn}(e.id,${queryVar}))})).filter(e=>e.score>0),[e=>${groupOrderVar}.get(e.command.group??null)??2**53-1,e=>-e.score,e=>e.command.title]).map(e=>e.command)}`);
-  } else if (next.includes(slashOriginal)) {
-    next = next.replace(slashOriginal, slashPatched);
+    nextSlash = nextSlash.replace(slashOriginalRe, `function ${fn}(e,t){let ${queryVar}=t.trim().replace(/^\\/+/,"");if(${queryVar}.length===0)return e;let ${groupOrderVar}=new Map;return e.forEach(e=>{let t=e.group??null;${groupOrderVar}.has(t)||${groupOrderVar}.set(t,${groupOrderVar}.size)}),(0,${sortByVar}.default)(e.map(e=>({command:e,score:Math.max(${scoreFn}(e.title,${queryVar}),${scoreFn}(e.id,${queryVar}))})).filter(e=>e.score>0),[e=>${groupOrderVar}.get(e.command.group??null)??2**53-1,e=>-e.score,e=>e.command.title]).map(e=>e.command)}`);
+    changedSlash = true;
+  } else if (nextSlash.includes(slashOriginal)) {
+    nextSlash = nextSlash.replace(slashOriginal, slashPatched);
+    changedSlash = true;
+  } else if (cmdkSlashRe.test(nextSlash) && (cmdkKeywordSearchRe.test(nextSlash) || nextSlash.includes('keywords:r'))) {
+    // Codex 26.519+ moved slash filtering to cmdk keywords; command id matching is already handled there.
   } else {
     process.stderr.write('slash-match-patch-target-not-found\n');
     process.exit(2);
   }
-  changed = true;
 }
 
-if (goalOriginalRe.test(next)) {
-  next = next.replace(goalOriginalRe, (_match, goalGateVar, _statsigFn, _configAccessFn, _configVar, modeVar, hasGoalVar, hasGoalExpr) => `${goalGateVar}=${modeVar}!==\`cloud\`,${hasGoalVar}=${hasGoalExpr},`);
-  changed = true;
-} else if (currentGoalOriginalRe.test(next)) {
-  next = next.replace(currentGoalOriginalRe, (_match, goalGateVar, _statsigFn, _configAccessFn, _configVar, modeVar, sideChatGuard = '', hasGoalVar, hasGoalExpr) => `${goalGateVar}=${modeVar}!==\`cloud\`${sideChatGuard},${hasGoalVar}=${hasGoalExpr},`);
-  changed = true;
-} else if (!goalPatchedRe.test(next)) {
+if (goalOriginalRe.test(nextComposer)) {
+  nextComposer = nextComposer.replace(goalOriginalRe, (_match, goalGateVar, _statsigFn, _configAccessFn, _configVar, modeVar, hasGoalVar, hasGoalExpr) => `${goalGateVar}=${modeVar}!==\`cloud\`,${hasGoalVar}=${hasGoalExpr},`);
+  changedComposer = true;
+} else if (currentGoalOriginalRe.test(nextComposer)) {
+  nextComposer = nextComposer.replace(currentGoalOriginalRe, (_match, goalGateVar, _statsigFn, _configAccessFn, _configVar, modeVar, sideChatGuard = '', hasGoalVar, hasGoalExpr) => `${goalGateVar}=${modeVar}!==\`cloud\`${sideChatGuard},${hasGoalVar}=${hasGoalExpr},`);
+  changedComposer = true;
+} else if (!(goalPatchedRe.test(nextComposer) || currentSplitGoalPatchedRe.test(nextComposer) || (goalCommandRe.test(nextComposer) && nextComposer.includes('threadGoalObjective')))) {
   process.stderr.write('goal-patch-target-not-found\n');
   process.exit(2);
 }
 
-if (!changed) {
+if (!changedComposer && !changedSlash) {
   process.stdout.write('already-patched');
   process.exit(0);
 }
-fs.writeFileSync(file, next);
+if (changedComposer) fs.writeFileSync(composerFile, nextComposer);
+if (changedSlash) fs.writeFileSync(slashFile, nextSlash);
 process.stdout.write('patched');
 '@
 
@@ -426,32 +533,53 @@ function Find-PatchTargets {
     }
   }
 
-  $goalTarget = $null
+  $goalComposerTarget = $null
   foreach ($candidate in (Invoke-RgList $RgPath 'threadGoalObjective' $assetsDir)) {
     $text = Get-Content -Raw -LiteralPath $candidate
     if (($text.Contains('3074100722') -and $text.Contains('goals')) -or
-        ($text -match 'score:Math\.max\([A-Za-z_$][\w$]*\(e\.title,\w+\),[A-Za-z_$][\w$]*\(e\.id,\w+\)\)') -or
-        ($text -match 'score:[A-Za-z_$][\w$]*\(e\.title,\w+\)')) {
-      $goalTarget = $candidate
+        ($text.Contains('composer.goalSlashCommand.title') -and $text -match 'id:`goal`,title:[^,]+,description:[^,]+,requiresEmptyComposer:!1,[^}]*enabled:[^,]+') -or
+        ($text -match '(\w+)=[A-Za-z_$][\w$]*!==`cloud`&&!\w+,(\w+)=')) {
+      $goalComposerTarget = $candidate
       break
     }
   }
-  if ([string]::IsNullOrWhiteSpace($goalTarget)) {
-    Fail 'could not find goal slash-command gate in extracted assets'
+  if ([string]::IsNullOrWhiteSpace($goalComposerTarget)) {
+    Fail 'could not find goal composer gate in extracted assets'
+  }
+
+  $goalSlashTarget = $null
+  foreach ($candidate in (Invoke-RgList $RgPath 'sourceMappingURL=slash-command-item' $assetsDir)) {
+    $goalSlashTarget = $candidate
+    break
+  }
+  if ([string]::IsNullOrWhiteSpace($goalSlashTarget)) {
+    foreach ($candidate in (Invoke-RgList $RgPath 'score:' $assetsDir)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if (($text -match 'score:Math\.max\([A-Za-z_$][\w$]*\(e\.title,\w+\),[A-Za-z_$][\w$]*\(e\.id,\w+\)\)') -or
+          ($text -match 'score:[A-Za-z_$][\w$]*\(e\.title,\w+\)')) {
+        $goalSlashTarget = $candidate
+        break
+      }
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($goalSlashTarget)) {
+    Fail 'could not find goal slash-command matcher in extracted assets'
   }
 
   Write-Log "fast-mode patch target: $fastModeTarget"
   Write-Log "plugin sidebar patch target: $pluginSidebarTarget"
   Write-Log "plugin skills-page patch target: $pluginSkillsTarget"
   Write-Log "plugin detail patch target: $pluginDetailTarget"
-  Write-Log "goal patch target: $goalTarget"
+  Write-Log "goal composer patch target: $goalComposerTarget"
+  Write-Log "goal slash-command patch target: $goalSlashTarget"
 
   return [pscustomobject]@{
     FastMode = $fastModeTarget
     PluginSidebar = $pluginSidebarTarget
     PluginSkills = $pluginSkillsTarget
     PluginDetail = $pluginDetailTarget
-    Goal = $goalTarget
+    GoalComposer = $goalComposerTarget
+    GoalSlash = $goalSlashTarget
   }
 }
 
@@ -498,7 +626,7 @@ function Invoke-PatchAppAsar {
   Write-Log "fast-mode patch result: $fast"
   $plugins = Invoke-NodePatcher $nodePath $patchers.Plugins @($targets.PluginSidebar, $targets.PluginSkills, $targets.PluginDetail)
   Write-Log "plugin patch result: $plugins"
-  $goal = Invoke-NodePatcher $nodePath $patchers.Goal @($targets.Goal)
+  $goal = Invoke-NodePatcher $nodePath $patchers.Goal @($targets.GoalComposer, $targets.GoalSlash)
   Write-Log "goal patch result: $goal"
 
   if ($DryRun) {
@@ -941,11 +1069,28 @@ setTimeout(() => server.close(() => process.exit(0)), 15000).unref();
 }
 
 function Cleanup-WindowsSdk {
-  $winget = Get-Command winget.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($winget) {
-    Write-Log 'uninstalling Windows SDK via winget'
-    & $winget.Source uninstall --id Microsoft.WindowsSDK.10.0.26100 -e --source winget --accept-source-agreements | Out-Host
+  $nugetTempRoot = Join-Path $env:TEMP 'codex-windows-sdk-buildtools'
+  if ($script:InstalledWindowsSdkViaNuGet -and (Test-Path -LiteralPath $nugetTempRoot)) {
+    Write-Log "cleanup NuGet Windows SDK BuildTools cache: $nugetTempRoot"
+    Remove-Item -LiteralPath $nugetTempRoot -Recurse -Force -ErrorAction SilentlyContinue
   }
+
+  if ($script:InstalledWindowsSdkViaWinget) {
+    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($winget) {
+      Write-Log 'uninstalling Windows SDK via winget'
+      try {
+        Invoke-ProcessWithTimeout `
+          -FilePath $winget.Source `
+          -ArgumentList @('uninstall', '--id', 'Microsoft.WindowsSDK.10.0.26100', '-e', '--source', 'winget', '--accept-source-agreements') `
+          -TimeoutSeconds $WindowsSdkInstallTimeoutSeconds `
+          -Description 'winget Windows SDK uninstall'
+      } catch {
+        Write-Log "warning: winget Windows SDK uninstall failed: $($_.Exception.Message)"
+      }
+    }
+  }
+
   $temp = Join-Path $env:TEMP 'windowssdk'
   if (Test-Path -LiteralPath $temp) {
     Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
