@@ -57,6 +57,14 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'scripts') -Destinatio
 
 一个典型请求是：`使用 codex-windows-fast-patch 这个 skill，检查并修复这台 Windows 机器上的 Codex Desktop Fast Mode、插件市场和 Computer Use 可用性问题。`
 
+## CPA 上游配置
+
+如果 Codex 请求的上游是 CPA，仅在本地把请求改成 `service_tier=priority` 还不够。还需要在 CPA 的覆盖规则中，对承接 Codex 的模型强制覆盖参数：`service_tier`、类型为字符串、值为 `priority`，这样上游才会真正按 Fast / Priority 路径处理。
+
+图中的模型名只是示例，实际应按 CPA 中当前承接 Codex 的模型填写。
+
+![CPA 覆盖规则示例](assets/cpa-override-rule.svg)
+
 ## 致谢
 
 感谢 [LinuxDo community](https://linux.do/) 中相关讨论和反馈对这个工作流的启发。

@@ -57,6 +57,14 @@ The scripts are reference implementations and operational templates, not a one-c
 
 Example request: `Use the codex-windows-fast-patch skill to inspect and repair Codex Desktop Fast Mode, plugin marketplace, and Computer Use availability on this Windows machine.`
 
+## CPA Upstream Configuration
+
+If Codex requests go through CPA upstream, changing the local request to `service_tier=priority` is not enough by itself. Add a CPA override rule for the models that handle Codex requests and force the parameter `service_tier` to string value `priority`, so the upstream actually uses the Fast / Priority path.
+
+The model names in the image are examples. Use the real Codex-facing model names configured in CPA.
+
+![CPA override rule example](assets/cpa-override-rule.svg)
+
 ## Acknowledgements
 
 Thanks to the [LinuxDo community](https://linux.do/) for the discussions and feedback around this workflow.
