@@ -27,11 +27,32 @@ It should not be run on macOS. A macOS version would need a separate workflow fo
 
 ## Install
 
-Copy this repository into your Codex skills directory:
+Clone the repository, open PowerShell in the repository root, then copy only the skill files:
 
 ```powershell
-Copy-Item -Recurse . "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch"
+$source = (Get-Location).ProviderPath
+if (-not (Test-Path -LiteralPath (Join-Path $source 'SKILL.md'))) {
+  throw 'Run this command from the codex-windows-fast-patch-skill repository root.'
+}
+
+$sizeBytes = (Get-ChildItem -LiteralPath $source -Force -Recurse -File | Where-Object {
+  $_.FullName -notmatch '\\.git\\'
+} | Measure-Object -Property Length -Sum).Sum
+if ($sizeBytes -gt 10MB) {
+  throw "Unexpected source size. Stop and check that '$source' is the repository root."
+}
+
+$dest = Join-Path $env:USERPROFILE '.codex\skills\codex-windows-fast-patch'
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
+
+Copy-Item -Force -LiteralPath (Join-Path $source 'SKILL.md') -Destination $dest
+Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'agents') -Destination $dest
+Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'scripts') -Destination $dest
 ```
+
+This repository is tiny, normally under 1 MB excluding `.git`. If a copy dialog or command claims it will copy gigabytes, stop: PowerShell is almost certainly running from the wrong current directory.
+
+Do not run `Copy-Item -Recurse . ...` from an arbitrary directory. If your current directory is a parent workspace or home directory, PowerShell will recursively copy that whole directory, including `.git`, build outputs, logs, downloads, and other unrelated files.
 
 Restart Codex after installing or updating the skill so the runtime reloads skill metadata.
 
