@@ -2,7 +2,7 @@
 
 语言：中文 | [English](README.en.md)
 
-这是 `codex-windows-fast-patch` skill 的公开脱敏版本，用于在 Windows 上快速恢复 Codex Desktop 升级后失效的本地补丁和能力开关。
+这是 `codex-windows-fast-patch` skill 的公开版本，用于指导智能体在 Windows 上恢复 Codex Desktop 升级后失效的本地补丁和能力开关。
 
 ## 主要功能
 
@@ -23,11 +23,11 @@
 
 ## 文件说明
 
-- `SKILL.md`：Codex skill 主说明。
+- `SKILL.md`：Agent skill 主说明。
 - `agents/openai.yaml`：agent 配置。
-- `scripts/repatch-codex-windows.ps1`：一键重新应用补丁的包装脚本。
-- `scripts/patch_codex_fast_mode_windows_msix.ps1`：MSIX / ASAR 补丁脚本。
-- `scripts/install-computer-use-local.ps1`：Windows Computer Use 本地兼容文件安装和校验脚本。
+- `scripts/repatch-codex-windows.ps1`：工作流参考脚本。
+- `scripts/patch_codex_fast_mode_windows_msix.ps1`：MSIX / ASAR 补丁参考实现。
+- `scripts/install-computer-use-local.ps1`：Windows Computer Use 本地兼容文件安装和校验参考实现。
 
 ## 安装
 
@@ -47,28 +47,16 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'agents') -Destination
 Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'scripts') -Destination $dest
 ```
 
-安装或更新后，重启 Codex，让它重新加载 skill 元数据。
+安装到 Codex 后，重启 Codex，让它重新加载 skill 元数据。
 
 ## 使用
 
-安装后，在 Codex 中直接要求重新应用 Windows Fast Patch，或使用 skill 中的包装脚本：
+安装后，让支持 Agent Skills 的智能体使用 `codex-windows-fast-patch` 工作流处理当前机器上的 Codex Desktop 问题。
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\repatch-codex-windows.ps1" -DryRun
-```
+这些脚本是参考实现和操作模板，不是跨所有机器都能直接运行的一键方案。实际处理时应先读取 `SKILL.md`，检查当前机器的 Codex 安装方式、MSIX 包路径、ASAR 内容、签名工具、插件目录和 Computer Use 文件状态，再决定执行、改写或只借鉴其中的步骤。
 
-确认 dry run 找到补丁目标后，再执行正式补丁：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\repatch-codex-windows.ps1"
-```
+一个典型请求是：`使用 codex-windows-fast-patch 这个 skill，检查并修复这台 Windows 机器上的 Codex Desktop Fast Mode、插件市场和 Computer Use 可用性问题。`
 
 ## 致谢
 
 感谢 [LinuxDo community](https://linux.do/) 中相关讨论和反馈对这个工作流的启发。
-
-## 脱敏说明
-
-此仓库不会包含本地 Codex 状态、认证文件、日志、插件缓存、生成的字节码、依赖目录或机器专属配置。
-
-发布前已检查常见敏感信息模式，例如 API key、GitHub token、认证文件、私有配置和本机路径等。
