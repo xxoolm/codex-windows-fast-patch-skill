@@ -592,6 +592,47 @@ function Get-InstalledBundledMarketplaceRoot {
   return $root
 }
 
+function Stop-OpenAiBundledExtensionHosts {
+  param([string[]]$Roots)
+
+  $resolvedRoots = @()
+  foreach ($rootPath in $Roots) {
+    if ([string]::IsNullOrWhiteSpace($rootPath) -or -not (Test-Path -LiteralPath $rootPath)) {
+      continue
+    }
+    $resolvedRoots += (Resolve-Path -LiteralPath $rootPath -ErrorAction Stop).ProviderPath.TrimEnd('\')
+  }
+  if ($resolvedRoots.Count -eq 0) {
+    return
+  }
+
+  $stopped = 0
+  foreach ($process in (Get-Process -Name 'extension-host' -ErrorAction SilentlyContinue)) {
+    $processPath = $null
+    try {
+      $processPath = $process.Path
+    } catch {
+      continue
+    }
+    if ([string]::IsNullOrWhiteSpace($processPath)) {
+      continue
+    }
+
+    foreach ($rootPath in $resolvedRoots) {
+      if ($processPath.StartsWith($rootPath + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Log "stopping bundled plugin lock holder: extension-host pid=$($process.Id)"
+        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        $stopped += 1
+        break
+      }
+    }
+  }
+
+  if ($stopped -gt 0) {
+    Start-Sleep -Seconds 2
+  }
+}
+
 function Sync-BundledMarketplaceFromInstalledApp {
   param([string]$MarketplaceRoot)
 
@@ -599,6 +640,10 @@ function Sync-BundledMarketplaceFromInstalledApp {
   $parent = Split-Path -Parent $MarketplaceRoot
   Resolve-OrCreateDirectory $parent | Out-Null
   Assert-UnderPath $MarketplaceRoot $parent
+  Stop-OpenAiBundledExtensionHosts @(
+    $MarketplaceRoot,
+    (Join-Path $CodexHome 'plugins\cache\openai-bundled')
+  )
 
   Write-Log "syncing installed openai-bundled marketplace: $sourceRoot -> $MarketplaceRoot"
   & robocopy.exe $sourceRoot $MarketplaceRoot /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
