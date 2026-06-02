@@ -20,6 +20,7 @@ if ([string]::IsNullOrWhiteSpace($PatchScript)) {
   $PatchScript = Join-Path $ScriptRoot 'patch_codex_fast_mode_windows_msix.ps1'
 }
 $ComputerUseScript = Join-Path $ScriptRoot 'install-computer-use-local.ps1'
+$script:ConfigBackupBeforeOverwrite = @{}
 
 function Write-Log {
   param([string]$Message)
@@ -69,6 +70,37 @@ function Write-Utf8NoBom {
   [System.IO.File]::WriteAllText($Path, $Content, $encoding)
 }
 
+function Backup-ConfigBeforeOverwrite {
+  param(
+    [string]$ConfigPath,
+    [string]$Reason = 'config-write'
+  )
+
+  if ([string]::IsNullOrWhiteSpace($ConfigPath) -or -not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+    return
+  }
+
+  $fullPath = [System.IO.Path]::GetFullPath($ConfigPath)
+  if ($script:ConfigBackupBeforeOverwrite.ContainsKey($fullPath)) {
+    return
+  }
+
+  $configDir = Split-Path -Parent $fullPath
+  $backupRoot = Join-Path $configDir 'backups\config'
+  New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
+
+  $safeReason = ([string]$Reason -replace '[^A-Za-z0-9_.-]', '-').Trim('-')
+  if ([string]::IsNullOrWhiteSpace($safeReason)) {
+    $safeReason = 'config-write'
+  }
+
+  $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+  $backupPath = Join-Path $backupRoot "config.toml.$stamp.$safeReason.bak"
+  Copy-Item -LiteralPath $ConfigPath -Destination $backupPath -Force
+  $script:ConfigBackupBeforeOverwrite[$fullPath] = $backupPath
+  Write-Log "config.toml backup before overwrite: $backupPath"
+}
+
 function Set-TomlTable {
   param(
     [string]$ConfigPath,
@@ -107,6 +139,7 @@ function Set-TomlTable {
     $content += $replacement
   }
 
+  Backup-ConfigBeforeOverwrite $ConfigPath "set-$Header"
   Write-Utf8NoBom $ConfigPath $content
 }
 
@@ -159,6 +192,7 @@ function Set-TomlTableValue {
     $content += "$Header`r`n$line`r`n"
   }
 
+  Backup-ConfigBeforeOverwrite $ConfigPath "set-$Header-$Key"
   Write-Utf8NoBom $ConfigPath $content
 }
 
@@ -242,9 +276,6 @@ function Invoke-ComputerUseInstaller {
 
 function Enable-ComputerUseFeature {
   $configPath = Join-Path $env:USERPROFILE '.codex\config.toml'
-  if ((Test-Path -LiteralPath $configPath) -and -not (Test-Path -LiteralPath "$configPath.computer-use-feature.bak")) {
-    Copy-Item -LiteralPath $configPath -Destination "$configPath.computer-use-feature.bak" -Force
-  }
   Set-TomlTableValue $configPath '[features]' 'computer_use' $true
   Set-TomlTableValue $configPath '[windows]' 'sandbox' 'unelevated'
   Test-TomlSyntax $configPath
@@ -264,10 +295,6 @@ function Register-LocalMarketplace {
   }
 
   $configPath = Join-Path $env:USERPROFILE '.codex\config.toml'
-  if ((Test-Path -LiteralPath $configPath) -and -not (Test-Path -LiteralPath "$configPath.local-marketplace.bak")) {
-    Copy-Item -LiteralPath $configPath -Destination "$configPath.local-marketplace.bak" -Force
-  }
-
   $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
   $source = '\\?\' + $resolvedPath
   Set-TomlTable $configPath '[marketplaces.openai-curated-local]' @{

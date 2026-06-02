@@ -25,21 +25,46 @@ The helper checks `chen0416ccc-cpu/codex-windows-fast-patch-skill` on GitHub and
 
 If the normal workflow does not explain a restriction, plugin gate, Computer Use failure, or Codex mobile entry failure, read `references/restriction-debug-cases.md` before editing scripts or repatching.
 
+## Config Backup Rule
+
+Before any action that can modify, regenerate, or overwrite `$env:USERPROFILE\.codex\config.toml`, create one timestamped backup of the current file for the task. This applies whether the agent uses bundled scripts, writes TOML manually, runs another helper, registers a marketplace, changes MCP servers, or repairs Computer Use.
+
+The bundled scripts already back up an existing `config.toml` once per script run before their first write. If not using those scripts, do the backup explicitly before touching the file:
+
+```powershell
+$config = Join-Path $env:USERPROFILE '.codex\config.toml'
+if (Test-Path -LiteralPath $config -PathType Leaf) {
+  $backupDir = Join-Path (Split-Path -Parent $config) 'backups\config'
+  New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+  $backup = Join-Path $backupDir ('config.toml.' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '.manual.bak')
+  Copy-Item -LiteralPath $config -Destination $backup -Force
+  Write-Host "config.toml backup before overwrite: $backup"
+}
+```
+
+Do not proceed with a config write if the backup of an existing config fails. After writing, validate TOML syntax with `tomllib` when Python is available.
+
 ## Default Workflow
 
-1. Inspect current package status:
+1. If the task may modify `config.toml`, skills, marketplaces, or MCP server settings, create a state snapshot first:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Backup
+```
+
+2. Inspect current package status:
 
 ```powershell
 Get-AppxPackage -Name OpenAI.Codex | Select-Object Name,PackageFullName,Version,SignatureKind,InstallLocation
 ```
 
-2. Run a dry run first after every Codex upgrade:
+3. Run a dry run first after every Codex upgrade:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\repatch-codex-windows.ps1" -DryRun
 ```
 
-3. If the dry run finds all patch targets, run the full repatch:
+4. If the dry run finds all patch targets, run the full repatch:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\repatch-codex-windows.ps1"
@@ -59,6 +84,7 @@ It also syncs the installed `openai-bundled` marketplace from the current Codex 
 It also patches the Desktop webview gates that otherwise hide or disable Windows Computer Use behind the `computer_use` experimental feature and Statsig gate `1506311413`, and it writes `features.computer_use = true` into `$env:USERPROFILE\.codex\config.toml` without replacing the rest of the `[features]` table.
 It also writes `[windows] sandbox = "unelevated"` into `$env:USERPROFILE\.codex\config.toml`. On Windows, this avoids the elevated sandbox setup refresh path that can fail with `spawn setup refresh` / OS error 740 and break Computer Use startup.
 It also repairs local marketplace manifest layout when a local root has only a legacy root `marketplace.json`; the current Codex CLI expects `.agents\plugins\marketplace.json`, and missing that file can make `codex plugin list` fail for all configured marketplaces.
+Any bundled script write to an existing `config.toml` first creates one timestamped backup for that script run under `.codex\backups\config\`.
 
 ## Important Guardrails
 
@@ -78,6 +104,7 @@ Remove-Item Env:ELECTRON_ENABLE_LOGGING -ErrorAction SilentlyContinue
 
 - If `makeappx.exe` or `signtool.exe` is missing, run the wrapper normally; it installs Windows SDK temporarily and removes it afterward.
 - If the local marketplace directory is missing, do not invent a marketplace. Report the missing path and ask whether to restore it from backup or re-extract it from a known source.
+- For ccswitch-style backup or migration of user-level Codex state, use `scripts\manage-codex-backups.ps1`. It backs up `config.toml`, extracted `mcp_servers.json`, custom skills, marketplaces, and `chrome-native-hosts.json`. It excludes `.git`, `node_modules`, build output, and virtual environments by default; use `-IncludeDependencyDirs` only when an exact offline dependency copy is needed. Plugin cache and `.tmp\bundled-marketplaces` are also opt-in because they can be large.
 - If `codex plugin list` fails with `failed to load configured marketplace snapshot(s)` and a local marketplace root contains only `marketplace.json`, copy that manifest to `.agents\plugins\marketplace.json` and re-run `codex plugin list` before diagnosing individual plugins.
 - Do not depend on `Downloads\patch_codex_fast_mode_windows_msix.ps1`; the skill is intended to be self-contained. Use `scripts\patch_codex_fast_mode_windows_msix.ps1` unless the user explicitly passes `-PatchScript`.
 - If the user's upstream is CPA, verify CPA override rules as part of Fast Mode validation: for the Codex-facing models, force `service_tier` as a string parameter with value `priority`. Local wire capture only proves Codex Desktop sent the field; CPA can still strip, ignore, or fail to apply it unless the override rule is configured.
@@ -120,8 +147,24 @@ To verify without changing files:
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\install-computer-use-local.ps1" -StrictVerifyOnly
 ```
 
+## Backup Management
+
+To back up local Codex config, MCP server entries, custom skills, marketplaces, and Chrome native-host state:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Backup
+```
+
+To list or restore snapshots:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action List
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Restore -BackupPath "<backup path>"
+```
+
 ## Success Criteria
 
+- If an existing `config.toml` was modified, the log shows a timestamped backup under `.codex\backups\config\`.
 - `Get-AppxPackage -Name OpenAI.Codex` shows `SignatureKind = Developer`.
 - Codex Desktop processes stay alive from `...\WindowsApps\OpenAI.Codex_<version>...\app\Codex.exe`.
 - Fast Mode verification logs `request wire service_tier=priority`.

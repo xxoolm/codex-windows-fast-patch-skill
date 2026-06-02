@@ -12,6 +12,8 @@
 - 修复本地插件市场清单目录结构。
 - 刷新 Windows Computer Use 兼容文件。
 - 解除 Computer Control 页面里 `Any App` / `任意应用` 被组织或地区门控禁用的问题。
+- 在覆盖 `config.toml` 前自动生成一次时间戳备份，降低配置误写风险。
+- 提供类似 ccswitch 的本机 Codex 状态备份管理：可备份、列出和恢复 `config.toml`、MCP 配置、skills 与 marketplaces。
 - 每次正式使用前自动尝试从 GitHub 同步最新版，让本地 skill 尽量保持具备处理新问题的最新工作流；网络不可用时不会强制中断。
 
 ## 平台支持
@@ -29,6 +31,7 @@
 - `scripts/repatch-codex-windows.ps1`：工作流参考脚本。
 - `scripts/patch_codex_fast_mode_windows_msix.ps1`：MSIX / ASAR 补丁参考实现。
 - `scripts/install-computer-use-local.ps1`：Windows Computer Use 本地兼容文件安装和校验参考实现。
+- `scripts/manage-codex-backups.ps1`：本机 Codex 配置、MCP、skills 和 marketplaces 的备份管理脚本。
 - `scripts/update-skill-from-github.ps1`：使用前尽力同步 GitHub 最新版的自更新脚本。
 - `references/restriction-debug-cases.md`：限制解除、Computer Use、移动入口和 CPA Fast Mode 的按需诊断案例。
 
@@ -62,6 +65,28 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'references') -Destina
 这些脚本是参考实现和操作模板，不是跨所有机器都能直接运行的一键方案。实际处理时应先读取 `SKILL.md`，检查当前机器的 Codex 安装方式、MSIX 包路径、ASAR 内容、签名工具、插件目录和 Computer Use 文件状态，再决定执行、改写或只借鉴其中的步骤。
 
 一个典型请求是：`使用 codex-windows-fast-patch 这个 skill，检查并修复这台 Windows 机器上的 Codex Desktop Fast Mode、插件市场和 Computer Use 可用性问题。`
+
+## 备份管理
+
+修复脚本在写入 `config.toml` 前会自动把旧文件备份到 `.codex\backups\config\`。如果要手动备份或迁移本机 Codex 的关键状态，可以使用独立备份脚本：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Backup
+```
+
+列出现有备份：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action List
+```
+
+从某个备份恢复：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Restore -BackupPath "<backup path>"
+```
+
+默认备份自定义 skills、marketplaces、`config.toml`、解析出的 `mcp_servers.json` 和 `chrome-native-hosts.json`，并排除 `.git`、`node_modules`、构建产物和虚拟环境等容易变大的目录。需要完整离线依赖副本时再加 `-IncludeDependencyDirs`；插件缓存和 `.tmp\bundled-marketplaces` 也可能较大，需要时再加 `-IncludePluginCache` 或 `-IncludeTmpBundledMarketplaces`。
 
 ## CPA 上游配置
 

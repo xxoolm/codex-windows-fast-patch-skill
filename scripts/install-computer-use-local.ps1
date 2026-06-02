@@ -9,6 +9,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $LogPrefix = '[codex-computer-use-local]'
+$script:ConfigBackupBeforeOverwrite = @{}
 
 function Write-Log {
   param([string]$Message)
@@ -23,6 +24,37 @@ function Write-Utf8NoBom {
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
   $encoding = [System.Text.UTF8Encoding]::new($false)
   [System.IO.File]::WriteAllText($Path, $Content, $encoding)
+}
+
+function Backup-ConfigBeforeOverwrite {
+  param(
+    [string]$ConfigPath,
+    [string]$Reason = 'config-write'
+  )
+
+  if ([string]::IsNullOrWhiteSpace($ConfigPath) -or -not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+    return
+  }
+
+  $fullPath = [System.IO.Path]::GetFullPath($ConfigPath)
+  if ($script:ConfigBackupBeforeOverwrite.ContainsKey($fullPath)) {
+    return
+  }
+
+  $configDir = Split-Path -Parent $fullPath
+  $backupRoot = Join-Path $configDir 'backups\config'
+  New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
+
+  $safeReason = ([string]$Reason -replace '[^A-Za-z0-9_.-]', '-').Trim('-')
+  if ([string]::IsNullOrWhiteSpace($safeReason)) {
+    $safeReason = 'config-write'
+  }
+
+  $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+  $backupPath = Join-Path $backupRoot "config.toml.$stamp.$safeReason.bak"
+  Copy-Item -LiteralPath $ConfigPath -Destination $backupPath -Force
+  $script:ConfigBackupBeforeOverwrite[$fullPath] = $backupPath
+  Write-Log "config.toml backup before overwrite: $backupPath"
 }
 
 function ConvertTo-JsonFile {
@@ -113,6 +145,7 @@ function Set-TomlTable {
     $content += $replacement
   }
 
+  Backup-ConfigBeforeOverwrite $ConfigPath "set-$Header"
   Write-Utf8NoBom $ConfigPath $content
 }
 
@@ -529,9 +562,6 @@ function Update-CodexConfig {
   param([string]$MarketplaceRoot)
 
   $configPath = Join-Path $CodexHome 'config.toml'
-  if ((Test-Path -LiteralPath $configPath) -and -not (Test-Path -LiteralPath "$configPath.computer-use.bak")) {
-    Copy-Item -LiteralPath $configPath -Destination "$configPath.computer-use.bak" -Force
-  }
   $source = '\\?\' + $MarketplaceRoot
   Set-TomlTable $configPath '[marketplaces.openai-bundled]' @{
     last_updated = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
