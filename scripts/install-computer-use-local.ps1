@@ -713,6 +713,93 @@ function Remove-StaleChromeNativeHostEntries {
   ConvertTo-JsonFile $statePath $json
 }
 
+function Get-PluginVersion {
+  param([string]$PluginRoot)
+
+  $pluginJson = Join-Path $PluginRoot '.codex-plugin\plugin.json'
+  if (-not (Test-Path -LiteralPath $pluginJson -PathType Leaf)) {
+    throw "missing plugin manifest: $pluginJson"
+  }
+
+  $plugin = Get-Content -Raw -LiteralPath $pluginJson | ConvertFrom-Json
+  $version = [string]$plugin.version
+  if ([string]::IsNullOrWhiteSpace($version)) {
+    throw "plugin manifest has no version: $pluginJson"
+  }
+
+  return $version
+}
+
+function Sync-OpenAiBundledPluginCache {
+  param(
+    [string]$MarketplaceRoot,
+    [string]$PluginName
+  )
+
+  $sourcePluginRoot = Join-Path $MarketplaceRoot "plugins\$PluginName"
+  $version = Get-PluginVersion $sourcePluginRoot
+  $cacheRoot = Join-Path $CodexHome "plugins\cache\openai-bundled\$PluginName"
+  $cacheVersionRoot = Join-Path $cacheRoot $version
+  $latestPath = Join-Path $cacheRoot 'latest'
+
+  Resolve-OrCreateDirectory $cacheRoot | Out-Null
+  Assert-UnderPath $cacheVersionRoot $cacheRoot
+  Assert-UnderPath $latestPath $cacheRoot
+
+  Stop-OpenAiBundledExtensionHosts @($sourcePluginRoot, $cacheRoot)
+
+  if (Test-Path -LiteralPath $cacheVersionRoot) {
+    Remove-ReparsePointOrDirectory $cacheVersionRoot
+  }
+
+  Write-Log "syncing bundled plugin cache: $PluginName@$version"
+  & robocopy.exe $sourcePluginRoot $cacheVersionRoot /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+  if ($LASTEXITCODE -gt 7) {
+    throw "robocopy failed while caching ${PluginName} (exit code $LASTEXITCODE)"
+  }
+
+  if (Test-Path -LiteralPath $latestPath) {
+    Remove-ReparsePointOrDirectory $latestPath
+  }
+  New-Item -ItemType Junction -Path $latestPath -Target $cacheVersionRoot | Out-Null
+  Write-Log "updated bundled plugin latest junction: $latestPath -> $cacheVersionRoot"
+
+  return $cacheVersionRoot
+}
+
+function Update-ChromeNativeMessagingManifest {
+  param([string]$ChromeCacheRoot)
+
+  $hostExe = Join-Path $ChromeCacheRoot 'extension-host\windows\x64\extension-host.exe'
+  if (-not (Test-Path -LiteralPath $hostExe -PathType Leaf)) {
+    throw "missing Chrome extension host executable: $hostExe"
+  }
+
+  $manifestPath = Join-Path $env:LOCALAPPDATA 'OpenAI\extension\com.openai.codexextension.json'
+  if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+    Write-Log "warning: Chrome native messaging manifest not found: $manifestPath"
+    return
+  }
+
+  try {
+    $json = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+  } catch {
+    Write-Log "warning: failed to parse Chrome native messaging manifest: $($_.Exception.Message)"
+    return
+  }
+
+  if ([string]$json.path -eq $hostExe) {
+    return
+  }
+
+  $backupPath = "$manifestPath.$(Get-Date -Format 'yyyyMMdd-HHmmss-fff').bak"
+  Copy-Item -LiteralPath $manifestPath -Destination $backupPath -Force
+  $json.path = $hostExe
+  ConvertTo-JsonFile $manifestPath $json
+  Write-Log "updated Chrome native messaging manifest: $manifestPath"
+  Write-Log "Chrome native messaging manifest backup: $backupPath"
+}
+
 function Sync-BundledMarketplaceFromInstalledApp {
   param([string]$MarketplaceRoot)
 
@@ -913,10 +1000,15 @@ function Install-ComputerUse {
   Update-CodexConfig $marketplaceRoot
   Enable-UserEnvironment
 
+  $browserCacheRoot = Sync-OpenAiBundledPluginCache $marketplaceRoot 'browser'
+  $chromeCacheRoot = Sync-OpenAiBundledPluginCache $marketplaceRoot 'chrome'
+
   if (Test-Path -LiteralPath $latestPath) {
     Remove-ReparsePointOrDirectory $latestPath
   }
   New-Item -ItemType Junction -Path $latestPath -Target $cacheVersionRoot | Out-Null
+
+  Update-ChromeNativeMessagingManifest $chromeCacheRoot
 
   Write-Log "installed marketplace plugin: $pluginSourceRoot"
   Write-Log "installed cached plugin: $cacheVersionRoot"
@@ -928,11 +1020,28 @@ function Test-ComputerUse {
   $marketplaceRoot = Join-Path $codexHomeResolved '.tmp\bundled-marketplaces\openai-bundled'
   $manifestPath = Join-Path $marketplaceRoot '.agents\plugins\marketplace.json'
   $cacheLatest = Join-Path $codexHomeResolved 'plugins\cache\openai-bundled\computer-use\latest'
+  $browserPluginRoot = Join-Path $marketplaceRoot 'plugins\browser'
+  $chromePluginRoot = Join-Path $marketplaceRoot 'plugins\chrome'
+  $browserVersion = Get-PluginVersion $browserPluginRoot
+  $chromeVersion = Get-PluginVersion $chromePluginRoot
+  $browserCacheLatest = Join-Path $codexHomeResolved 'plugins\cache\openai-bundled\browser\latest'
+  $chromeCacheLatest = Join-Path $codexHomeResolved 'plugins\cache\openai-bundled\chrome\latest'
+  $browserCacheVersionRoot = Join-Path $codexHomeResolved "plugins\cache\openai-bundled\browser\$browserVersion"
+  $chromeCacheVersionRoot = Join-Path $codexHomeResolved "plugins\cache\openai-bundled\chrome\$chromeVersion"
+  $chromeNativeManifest = Join-Path $env:LOCALAPPDATA 'OpenAI\extension\com.openai.codexextension.json'
+  $chromeHostPath = Join-Path $chromeCacheVersionRoot 'extension-host\windows\x64\extension-host.exe'
   $helperTransportPath = Join-Path $cacheLatest 'node_modules\@oai\sky\dist\project\cua\sky_js\src\targets\windows\internal\helper_transport.js'
   $required = @(
     $manifestPath,
     (Join-Path $marketplaceRoot 'plugins\computer-use\.codex-plugin\plugin.json'),
+    (Join-Path $browserPluginRoot '.codex-plugin\plugin.json'),
+    (Join-Path $chromePluginRoot '.codex-plugin\plugin.json'),
     (Join-Path $cacheLatest '.codex-plugin\plugin.json'),
+    (Join-Path $browserCacheLatest '.codex-plugin\plugin.json'),
+    (Join-Path $chromeCacheLatest '.codex-plugin\plugin.json'),
+    (Join-Path $browserCacheVersionRoot '.codex-plugin\plugin.json'),
+    (Join-Path $chromeCacheVersionRoot '.codex-plugin\plugin.json'),
+    $chromeHostPath,
     (Join-Path $cacheLatest 'node_modules\@oai\sky\package.json'),
     (Join-Path $cacheLatest 'node_modules\@oai\sky\bin\windows\codex-computer-use.exe'),
     $helperTransportPath
@@ -941,6 +1050,24 @@ function Test-ComputerUse {
   foreach ($path in $required) {
     if (-not (Test-Path -LiteralPath $path)) {
       throw "missing required Computer Use path: $path"
+    }
+  }
+
+  foreach ($latestPath in @($browserCacheLatest, $chromeCacheLatest)) {
+    $item = Get-Item -LiteralPath $latestPath -Force
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) {
+      throw "bundled plugin latest path is not a junction: $latestPath"
+    }
+    $target = [string]($item.Target -join ';')
+    if ($target.StartsWith($marketplaceRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+      throw "bundled plugin latest junction points at mutable marketplace mirror: $latestPath -> $target"
+    }
+  }
+
+  if (Test-Path -LiteralPath $chromeNativeManifest -PathType Leaf) {
+    $nativeManifest = Get-Content -Raw -LiteralPath $chromeNativeManifest | ConvertFrom-Json
+    if ([string]$nativeManifest.path -ne $chromeHostPath) {
+      throw "Chrome native messaging manifest does not point at stable cache path: $chromeNativeManifest"
     }
   }
 
