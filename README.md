@@ -2,7 +2,7 @@
 
 语言：中文 | [English](README.en.md)
 
-这是 `codex-windows-fast-patch` skill 的公开版本，用于指导智能体在 Windows 上恢复 Codex Desktop 升级后失效的本地补丁和能力开关。
+这是 `codex-windows-fast-patch` skill 的公开版本，用于指导智能体在 Windows 上恢复 Codex Desktop 升级后失效的本地补丁和能力开关。使用前请阅读“使用说明及注意事项”。
 
 ## 主要功能
 
