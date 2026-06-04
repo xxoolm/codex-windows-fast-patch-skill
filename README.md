@@ -66,7 +66,7 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'references') -Destina
 
 这些脚本是参考实现和操作模板，不是跨所有机器都能直接运行的一键方案。实际处理时应先读取 `SKILL.md`，检查当前机器的 Codex 安装方式、MSIX 包路径、ASAR 内容、签名工具、插件目录和 Computer Use 文件状态，再决定执行、改写或只借鉴其中的步骤。
 
-## 遇到问题时怎么用
+## 使用说明及注意事项
 
 - Computer Use 提示插件不可用、`missing-helper-path`、重启后又失效，或 Chrome/browser helper 路径、缓存、native-host 坏了：可以让当前 Codex Desktop 会话用这个 skill 修，不需要外部 agent。使用 `scripts/install-computer-use-local.ps1` 或 `scripts/install-computer-use-local.ps1 -VerifyOnly`，修完重启 Codex。
 - 插件市场配置坏了、`codex plugin list` 因 marketplace manifest 报错、本地 marketplace 缺 `.agents\plugins\marketplace.json`：可以让当前 Codex Desktop 会话用这个 skill 修，不需要外部 agent。使用 `scripts/repatch-codex-windows.ps1 -RegisterMarketplaceOnly` 或本地 marketplace 修复流程。
