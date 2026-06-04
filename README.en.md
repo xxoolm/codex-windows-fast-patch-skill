@@ -66,6 +66,12 @@ This skill supports self-updating: before each substantive use, the agent first 
 
 The scripts are reference implementations and operational templates, not a one-command fix that is guaranteed to work on every machine. A real run should first read `SKILL.md`, inspect the current Codex installation method, MSIX package path, ASAR contents, signing tools, plugin directories, and Computer Use file state, then decide whether to execute, adapt, or only borrow steps from the scripts.
 
+## Which Runner To Use
+
+- If Computer Use says the plugin is unavailable, shows `missing-helper-path`, breaks again after restart, or Chrome/browser helper paths, cache links, or native-host files are wrong: the current Codex Desktop session can use this skill; no other agent is required. Run `scripts/install-computer-use-local.ps1` or `scripts/install-computer-use-local.ps1 -VerifyOnly`, then restart Codex.
+- If plugin marketplace config is broken, `codex plugin list` fails because of marketplace manifests, or a local marketplace is missing `.agents\plugins\marketplace.json`: the current Codex Desktop session can use this skill; no other agent is required. Run `scripts/repatch-codex-windows.ps1 -RegisterMarketplaceOnly` or the local marketplace repair flow.
+- If Fast Mode is missing or does not send `service_tier=priority`, plugin entries or install buttons are greyed out, Computer Control `Any App` is greyed out, Browser/Chrome/browser_use is greyed out, language resets to English after restart, Goal entries disappear, or Codex Mobile / Connections setup loops into login: these require patching Codex Desktop MSIX/ASAR. Prefer another agent or an external PowerShell for the full repatch so the current Desktop session is not interrupted while it stops and reinstalls itself.
+
 Example request: `Use the codex-windows-fast-patch skill to inspect and repair Codex Desktop Fast Mode, language/locale, Chrome browser_use, plugin marketplace, and Computer Use availability on this Windows machine.`
 
 Expected verification after a full run:

@@ -66,6 +66,12 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'references') -Destina
 
 这些脚本是参考实现和操作模板，不是跨所有机器都能直接运行的一键方案。实际处理时应先读取 `SKILL.md`，检查当前机器的 Codex 安装方式、MSIX 包路径、ASAR 内容、签名工具、插件目录和 Computer Use 文件状态，再决定执行、改写或只借鉴其中的步骤。
 
+## 遇到问题时怎么用
+
+- Computer Use 提示插件不可用、`missing-helper-path`、重启后又失效，或 Chrome/browser helper 路径、缓存、native-host 坏了：可以让当前 Codex Desktop 会话用这个 skill 修，不需要外部 agent。使用 `scripts/install-computer-use-local.ps1` 或 `scripts/install-computer-use-local.ps1 -VerifyOnly`，修完重启 Codex。
+- 插件市场配置坏了、`codex plugin list` 因 marketplace manifest 报错、本地 marketplace 缺 `.agents\plugins\marketplace.json`：可以让当前 Codex Desktop 会话用这个 skill 修，不需要外部 agent。使用 `scripts/repatch-codex-windows.ps1 -RegisterMarketplaceOnly` 或本地 marketplace 修复流程。
+- Fast Mode 看不到或请求不带 `service_tier=priority`、插件入口/安装按钮灰、Computer Control 的 `Any App` 灰、Browser/Chrome/browser_use 灰、语言重启回英文、Goal 入口没了、Codex mobile/连接页设置卡登录：这些要改 Codex Desktop MSIX/ASAR，建议让其它 agent 或外部 PowerShell 跑完整 repatch，避免当前 Desktop 停止/重装自己导致会话中断。
+
 一个典型请求是：`使用 codex-windows-fast-patch 这个 skill，检查并修复这台 Windows 机器上的 Codex Desktop Fast Mode、语言/locale、Chrome browser_use、插件市场和 Computer Use 可用性问题。`
 
 完整运行后的预期验证结果：
