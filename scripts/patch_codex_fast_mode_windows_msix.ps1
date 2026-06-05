@@ -34,39 +34,6 @@ function Fail {
   throw "$LogPrefix error: $Message"
 }
 
-function Test-PatchTarget {
-  param([AllowNull()][string]$Path)
-  return -not [string]::IsNullOrWhiteSpace($Path)
-}
-
-function Require-PatchTarget {
-  param(
-    [string]$Name,
-    [AllowNull()][string]$Path
-  )
-  if (-not (Test-PatchTarget $Path)) {
-    Fail "could not find patch target: $Name"
-  }
-}
-
-function Write-OptionalPatchTargetWarning {
-  param(
-    [string]$Name,
-    [AllowNull()][string]$Path
-  )
-  if (-not (Test-PatchTarget $Path)) {
-    Write-Log "warning: optional patch target not found: $Name"
-  }
-}
-
-function ConvertTo-PatchArgument {
-  param([AllowNull()][string]$Path)
-  if (Test-PatchTarget $Path) {
-    return [string]$Path
-  }
-  return '__none__'
-}
-
 function Test-IsAdministrator {
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
   $principal = [Security.Principal.WindowsPrincipal]::new($identity)
@@ -805,11 +772,11 @@ function patchRemoteControlMain(file) {
   writeIfChanged(file, before, after);
 }
 
-if (hasFile(availabilityFile)) patchComputerUseAvailability(availabilityFile);
-if (hasFile(installFlowFile)) patchComputerUseInstallFlow(installFlowFile);
-if (hasFile(mobileSetupFile)) patchMobileSetup(mobileSetupFile);
+patchComputerUseAvailability(availabilityFile);
+patchComputerUseInstallFlow(installFlowFile);
+patchMobileSetup(mobileSetupFile);
 if (hasFile(mobileSetupFlowFile)) patchCodexMobileSetupFlow(mobileSetupFlowFile);
-if (hasFile(remoteControlMainFile)) patchRemoteControlMain(remoteControlMainFile);
+patchRemoteControlMain(remoteControlMainFile);
 
 process.stdout.write(changed ? 'patched' : 'already-patched');
 '@
@@ -1060,18 +1027,32 @@ function Find-PatchTargets {
     }
   }
 
-  Require-PatchTarget 'fastModeTarget' $fastModeTarget
-  Require-PatchTarget 'fastModeUiTarget' $fastModeUiTarget
-  Write-OptionalPatchTargetWarning 'localeI18nTarget' $localeI18nTarget
-  Write-OptionalPatchTargetWarning 'Browser Use feature hook gate in extracted assets' $browserUseFeatureHookTarget
-  Write-OptionalPatchTargetWarning 'browser sidebar availability gate in extracted assets' $browserSidebarAvailabilityTarget
-  Write-OptionalPatchTargetWarning 'desktop browser-use feature sender in extracted assets' $desktopFeatureSenderTarget
-  Write-OptionalPatchTargetWarning 'desktop browser-use feature receiver in extracted ASAR' $desktopFeatureMainTarget
+  if ([string]::IsNullOrWhiteSpace($fastModeTarget)) {
+    Fail 'could not find patch target: fastModeTarget'
+  }
+  if ([string]::IsNullOrWhiteSpace($fastModeUiTarget)) {
+    Fail 'could not find patch target: fastModeUiTarget'
+  }
+  if ([string]::IsNullOrWhiteSpace($localeI18nTarget)) {
+    Fail 'could not find patch target: localeI18nTarget'
+  }
+  if ([string]::IsNullOrWhiteSpace($browserUseFeatureHookTarget)) {
+    Fail 'could not find Browser Use feature hook gate in extracted assets'
+  }
+  if ([string]::IsNullOrWhiteSpace($browserSidebarAvailabilityTarget)) {
+    Fail 'could not find browser sidebar availability gate in extracted assets'
+  }
+  if ([string]::IsNullOrWhiteSpace($desktopFeatureSenderTarget)) {
+    Fail 'could not find desktop browser-use feature sender in extracted assets'
+  }
+  if ([string]::IsNullOrWhiteSpace($desktopFeatureMainTarget)) {
+    Fail 'could not find desktop browser-use feature receiver in extracted ASAR'
+  }
   $oldPluginTargetsFound = -not [string]::IsNullOrWhiteSpace($pluginSidebarTarget) -and
                            -not [string]::IsNullOrWhiteSpace($pluginSkillsTarget) -and
                            -not [string]::IsNullOrWhiteSpace($pluginDetailTarget)
   if (-not $oldPluginTargetsFound -and [string]::IsNullOrWhiteSpace($pluginPageAuthTarget)) {
-    Write-Log 'warning: optional patch target not found: plugin auth patch target in extracted assets'
+    Fail 'could not find plugin auth patch target in extracted assets'
   }
 
   $goalComposerTarget = $null
@@ -1084,7 +1065,9 @@ function Find-PatchTargets {
       break
     }
   }
-  Write-OptionalPatchTargetWarning 'goal composer gate in extracted assets' $goalComposerTarget
+  if ([string]::IsNullOrWhiteSpace($goalComposerTarget)) {
+    Fail 'could not find goal composer gate in extracted assets'
+  }
 
   $goalSlashTarget = $null
   foreach ($candidate in (Invoke-RgList $RgPath 'sourceMappingURL=slash-command-item|sourceMappingURL=local-remote-selection' $assetsDir)) {
@@ -1114,7 +1097,9 @@ function Find-PatchTargets {
       }
     }
   }
-  Write-OptionalPatchTargetWarning 'goal slash-command matcher in extracted assets' $goalSlashTarget
+  if ([string]::IsNullOrWhiteSpace($goalSlashTarget)) {
+    Fail 'could not find goal slash-command matcher in extracted assets'
+  }
 
   $computerUseAvailabilityTarget = $null
   $computerUseInstallFlowTarget = $null
@@ -1142,8 +1127,12 @@ function Find-PatchTargets {
       }
     }
   }
-  Write-OptionalPatchTargetWarning 'Computer Use availability gate in extracted assets' $computerUseAvailabilityTarget
-  Write-OptionalPatchTargetWarning 'Computer Use install-flow gate in extracted assets' $computerUseInstallFlowTarget
+  if ([string]::IsNullOrWhiteSpace($computerUseAvailabilityTarget)) {
+    Fail 'could not find Computer Use availability gate in extracted assets'
+  }
+  if ([string]::IsNullOrWhiteSpace($computerUseInstallFlowTarget)) {
+    Fail 'could not find Computer Use install-flow gate in extracted assets'
+  }
 
   $computerUseMobileSetupTarget = $null
   foreach ($candidate in (Invoke-RgList $RgPath 'showComputerUseSetup' $assetsDir)) {
@@ -1153,7 +1142,9 @@ function Find-PatchTargets {
       break
     }
   }
-  Write-OptionalPatchTargetWarning 'Computer Use mobile setup gate in extracted assets' $computerUseMobileSetupTarget
+  if ([string]::IsNullOrWhiteSpace($computerUseMobileSetupTarget)) {
+    Fail 'could not find Computer Use mobile setup gate in extracted assets'
+  }
 
   $codexMobileSetupFlowTarget = $null
   foreach ($candidate in (Invoke-RgList $RgPath 'ChatGPT auth is required to load remote control environments' $assetsDir)) {
@@ -1167,7 +1158,9 @@ function Find-PatchTargets {
       break
     }
   }
-  Write-OptionalPatchTargetWarning 'Codex mobile setup-flow auth fallback target in extracted assets' $codexMobileSetupFlowTarget
+  if ([string]::IsNullOrWhiteSpace($codexMobileSetupFlowTarget)) {
+    Write-Log 'warning: Codex mobile setup-flow auth fallback target not found; skipping that compatibility patch'
+  }
 
   $remoteControlMainTarget = $null
   if (Test-Path -LiteralPath $viteBuildDir -PathType Container) {
@@ -1179,7 +1172,9 @@ function Find-PatchTargets {
       }
     }
   }
-  Write-OptionalPatchTargetWarning 'remote-control main-process auth fallback target in extracted ASAR' $remoteControlMainTarget
+  if ([string]::IsNullOrWhiteSpace($remoteControlMainTarget)) {
+    Fail 'could not find remote-control main-process auth fallback target in extracted ASAR'
+  }
 
   Write-Log "fast-mode patch target: $fastModeTarget"
   Write-Log "fast-mode UI patch target: $fastModeUiTarget"
@@ -1266,64 +1261,42 @@ function Invoke-PatchAppAsar {
   $fastUi = Invoke-NodePatcher $nodePath $patchers.FastUi @($targets.FastModeUi)
   Write-Log "fast-mode UI patch result: $fastUi"
 
-  $localeI18n = 'skipped'
-  if (Test-PatchTarget $targets.LocaleI18n) {
-    $localeI18n = Invoke-NodePatcher $nodePath $patchers.LocaleI18n @($targets.LocaleI18n)
-  }
+  $localeI18n = Invoke-NodePatcher $nodePath $patchers.LocaleI18n @($targets.LocaleI18n)
   Write-Log "locale i18n patch result: $localeI18n"
   $pluginArgs = @(
-    (ConvertTo-PatchArgument $targets.PluginSidebar)
-    (ConvertTo-PatchArgument $targets.PluginSkills)
-    (ConvertTo-PatchArgument $targets.PluginDetail)
-    (ConvertTo-PatchArgument $targets.PluginPageAuth)
+    $(if ([string]::IsNullOrWhiteSpace($targets.PluginSidebar)) { '__none__' } else { [string]$targets.PluginSidebar })
+    $(if ([string]::IsNullOrWhiteSpace($targets.PluginSkills)) { '__none__' } else { [string]$targets.PluginSkills })
+    $(if ([string]::IsNullOrWhiteSpace($targets.PluginDetail)) { '__none__' } else { [string]$targets.PluginDetail })
+    $(if ([string]::IsNullOrWhiteSpace($targets.PluginPageAuth)) { '__none__' } else { [string]$targets.PluginPageAuth })
   )
-  $oldPluginTargetsFound = (Test-PatchTarget $targets.PluginSidebar) -and
-                           (Test-PatchTarget $targets.PluginSkills) -and
-                           (Test-PatchTarget $targets.PluginDetail)
-  $plugins = 'skipped'
-  if ($oldPluginTargetsFound -or (Test-PatchTarget $targets.PluginPageAuth)) {
-    $plugins = Invoke-NodePatcher $nodePath $patchers.Plugins $pluginArgs
-  }
+  $plugins = Invoke-NodePatcher $nodePath $patchers.Plugins $pluginArgs
   Write-Log "plugin patch result: $plugins"
-  $goal = 'skipped'
-  if ((Test-PatchTarget $targets.GoalComposer) -and (Test-PatchTarget $targets.GoalSlash)) {
-    $goal = Invoke-NodePatcher $nodePath $patchers.Goal @($targets.GoalComposer, $targets.GoalSlash)
-  }
+  $goal = Invoke-NodePatcher $nodePath $patchers.Goal @($targets.GoalComposer, $targets.GoalSlash)
   Write-Log "goal patch result: $goal"
-  $browserUse = 'skipped'
-  if ((Test-PatchTarget $targets.BrowserUseFeatureHook) -and
-      (Test-PatchTarget $targets.BrowserSidebarAvailability) -and
-      (Test-PatchTarget $targets.DesktopFeatureSender) -and
-      (Test-PatchTarget $targets.DesktopFeatureMain)) {
-    $browserUse = Invoke-NodePatcher $nodePath $patchers.BrowserUse @($targets.BrowserUseFeatureHook, $targets.BrowserSidebarAvailability, $targets.DesktopFeatureSender, $targets.DesktopFeatureMain)
-  }
+  $browserUse = Invoke-NodePatcher $nodePath $patchers.BrowserUse @($targets.BrowserUseFeatureHook, $targets.BrowserSidebarAvailability, $targets.DesktopFeatureSender, $targets.DesktopFeatureMain)
   Write-Log "browser-use gate patch result: $browserUse"
   $computerUseArgs = @(
-    (ConvertTo-PatchArgument $targets.ComputerUseAvailability)
-    (ConvertTo-PatchArgument $targets.ComputerUseInstallFlow)
-    (ConvertTo-PatchArgument $targets.ComputerUseMobileSetup)
-    (ConvertTo-PatchArgument $targets.CodexMobileSetupFlow)
-    (ConvertTo-PatchArgument $targets.RemoteControlMain)
+    [string]$targets.ComputerUseAvailability
+    [string]$targets.ComputerUseInstallFlow
+    [string]$targets.ComputerUseMobileSetup
+    $(if ([string]::IsNullOrWhiteSpace($targets.CodexMobileSetupFlow)) { '__none__' } else { [string]$targets.CodexMobileSetupFlow })
+    [string]$targets.RemoteControlMain
   )
-  $computerUseTargetFound = (Test-PatchTarget $targets.ComputerUseAvailability) -or
-                            (Test-PatchTarget $targets.ComputerUseInstallFlow) -or
-                            (Test-PatchTarget $targets.ComputerUseMobileSetup) -or
-                            (Test-PatchTarget $targets.CodexMobileSetupFlow) -or
-                            (Test-PatchTarget $targets.RemoteControlMain)
-  $computerUse = 'skipped'
-  if ($computerUseTargetFound) {
-    $computerUse = Invoke-NodePatcher $nodePath $patchers.ComputerUse $computerUseArgs
-  }
+  $computerUse = Invoke-NodePatcher $nodePath $patchers.ComputerUse $computerUseArgs
   Write-Log "computer-use gate patch result: $computerUse"
 
   if ($DryRun) {
-    Write-Log 'dry run: required patch targets matched; no package was changed'
+    Write-Log 'dry run: patch target validation completed; no package was changed'
     return $false
   }
 
-  $changedPatchResults = @($fast, $fastUi, $localeI18n, $plugins, $goal, $browserUse, $computerUse) |
-    Where-Object { $_ -ne 'already-patched' -and $_ -ne 'skipped' }
-  if (-not $changedPatchResults) {
+  if ($fast -eq 'already-patched' -and
+      $fastUi -eq 'already-patched' -and
+      $localeI18n -eq 'already-patched' -and
+      $plugins -eq 'already-patched' -and
+      $goal -eq 'already-patched' -and
+      $browserUse -eq 'already-patched' -and
+      $computerUse -eq 'already-patched') {
     Write-Log 'asar patch already present'
     return $false
   }
