@@ -14,6 +14,7 @@ This is the public version of the `codex-windows-fast-patch` skill. It guides ag
 - Unlock in-app browser, browser pane, and external Chrome/browser_use availability gates when the Store build disables them through local feature/Statsig checks.
 - Repair Windows Computer Use local plugin files, runtime compatibility files, and helper paths.
 - Unlock the Computer Control `Any App` gate when the UI reports organization or region unavailability.
+- Repair the Windows phone remote-control setup path, including Connections-page visibility, QR pairing, isolated remote-control auth, and native app-server WebSocket connectivity while preserving third-party/API-key main app usage.
 - Optionally install a bundled custom `model_instructions_file` prompt asset when the user explicitly asks for that extra configuration.
 - Create a timestamped backup before overwriting `config.toml`, reducing the risk of accidental config loss.
 - Before each substantive use, automatically try syncing the latest workflow from GitHub so the local skill stays ready for newly discovered issues; network failures do not block the repair.
@@ -32,12 +33,15 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `agents/openai.yaml`: Agent configuration.
 - `scripts/repatch-codex-windows.ps1`: Workflow reference script.
 - `scripts/patch_codex_fast_mode_windows_msix.ps1`: MSIX / ASAR patch reference implementation.
+- `scripts/patch-remote-control-windows-msix.ps1`: Phone remote-control MSIX / ASAR patch and marker verification reference implementation.
+- `scripts/patch-remote-control-asar.cjs`: Phone remote-control Electron bundle patcher used by the MSIX script.
 - `scripts/install-computer-use-local.ps1`: Windows Computer Use local compatibility reference implementation.
 - `scripts/install-model-instructions-file.ps1`: Optional installer for the bundled `model_instructions_file` prompt asset.
 - `scripts/manage-codex-backups.ps1`: Backup manager for local Codex config, MCP, skills, and marketplaces.
 - `scripts/update-skill-from-github.ps1`: Best-effort self-update script that syncs the latest GitHub version before use.
 - `assets/system-prompt.md`: Bundled prompt asset used only when optional model instructions setup is requested.
 - `references/restriction-debug-cases.md`: On-demand cases for restriction gates, Chrome/browser_use, Computer Use, and CPA Fast Mode.
+- `references/remote-control-debug-cases.md`: On-demand cases for phone remote-control pairing, isolated auth, native app-server networking, version-expired state, and post-pairing API endpoint diagnosis.
 
 ## Install
 
@@ -74,9 +78,12 @@ The scripts are reference implementations and operational templates, not a one-c
 - If Computer Use says the plugin is unavailable, shows `missing-helper-path`, breaks again after restart, or Chrome/browser helper paths, cache links, or native-host files are wrong: the current Codex Desktop session can use this skill; no other agent is required. Run `scripts/install-computer-use-local.ps1` or `scripts/install-computer-use-local.ps1 -VerifyOnly`, then restart Codex.
 - If plugin marketplace config is broken, `codex plugin list` fails because of marketplace manifests, or a local marketplace is missing `.agents\plugins\marketplace.json`: the current Codex Desktop session can use this skill; no other agent is required. Run `scripts/repatch-codex-windows.ps1 -RegisterMarketplaceOnly` or the local marketplace repair flow.
 - If the user explicitly asks to install the bundled custom model instructions prompt: run `scripts/install-model-instructions-file.ps1`, then restart Codex CLI/Desktop or start a new session.
+- If phone remote control is hidden, spins on QR, redirects to ChatGPT login, fails after Allow, or reports an expired Codex environment: use `references/remote-control-debug-cases.md` and the explicit phone remote-control scripts. This is opt-in and is not part of the default Fast Mode repatch. If pairing works but a phone-created turn hits the wrong model API endpoint, diagnose that as a post-pairing configuration case from the actual request URL and current config.
 - If Fast Mode is missing or does not send `service_tier=priority`, plugin entries or install buttons are greyed out, Computer Control `Any App` is greyed out, Browser/Chrome/browser_use is greyed out, language resets to English after restart, or Goal entries disappear: these require patching Codex Desktop MSIX/ASAR. Prefer another agent or an external PowerShell for the full repatch so the current Desktop session is not interrupted while it stops and reinstalls itself.
 
 Example request: `Use the codex-windows-fast-patch skill to inspect and repair Codex Desktop Fast Mode, language/locale, Chrome browser_use, plugin marketplace, and Computer Use availability on this Windows machine.`
+
+Phone remote-control example request: `Use the codex-windows-fast-patch skill to repair Windows Codex Desktop phone remote control while preserving my third-party API provider and current conversation history.`
 
 Expected verification after a full run:
 
@@ -84,6 +91,7 @@ Expected verification after a full run:
 - Fast Mode wire verification captures `service_tier=priority` in Codex Desktop's `/v1/responses` request.
 - Desktop logs show `browser_use_availability_resolved` with `available=true` and `reason=local-patched` when browser use is part of the repair.
 - If Chrome control is required, `codex plugin list` shows `chrome@openai-bundled` as `installed, enabled`, the native messaging host manifest points to existing files, and a smoke test can read a controlled tab title such as `Example Domain`.
+- If phone remote control is repaired, Connections shows the phone setup path, QR appears, phone scan does not report an expired Codex environment, native logs show remote-control WebSocket ping/pong/ack, and phone-created turns reach Desktop.
 
 ## Backup Management
 
