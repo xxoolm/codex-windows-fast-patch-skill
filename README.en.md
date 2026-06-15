@@ -14,10 +14,11 @@ Use this skill when Windows Codex Desktop updates cause issues like these:
 - Repair the in-app browser, browser pane, Chrome, or browser_use when they are unavailable.
 - Repair Computer Use / computer control / Any App when it is unavailable.
 - Repair Computer Use errors such as `native pipe unavailable`, `missing-helper-path`, broken plugin cache, or broken helper paths.
-- Repair phone remote control when the entry is hidden, the QR code keeps spinning, setup redirects to ChatGPT login, Allow fails, or the phone says the Codex version is expired.
+- Repair native phone remote control under a third-party API login state when the entry is hidden, the QR code keeps spinning, setup redirects to ChatGPT login, Allow fails, or the phone says the Codex version is expired.
 - Repair Goal entries, settings entries, or feature buttons that disappear or become disabled after updates.
 - Repair broken local plugin marketplace config or `codex plugin list` errors.
 - Optionally back up and restore local Codex config, skills, marketplaces, and related state.
+- Automatically update this skill to the latest version before each repair attempt.
 
 ## Platform Support
 
