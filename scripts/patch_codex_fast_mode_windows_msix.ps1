@@ -212,7 +212,7 @@ function Remove-DirectoryRobust {
   $emptyDir = Join-Path ([System.IO.Path]::GetTempPath()) ('codex-empty-' + [guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Force -Path $emptyDir | Out-Null
   try {
-    & robocopy.exe $emptyDir $resolved /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+    & robocopy.exe $emptyDir $resolved /MIR /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -gt 7) {
       Write-Log "warning: robocopy empty mirror cleanup failed with exit code $LASTEXITCODE for $resolved"
     }
@@ -323,7 +323,7 @@ function Copy-PackageLayout {
   if (-not (Test-Path -LiteralPath $WorkPackageRoot)) {
     New-Item -ItemType Directory -Force -Path $WorkPackageRoot | Out-Null
     Write-Log "copying package layout to: $WorkPackageRoot"
-    & robocopy.exe $SourcePackageRoot $WorkPackageRoot /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+    & robocopy.exe $SourcePackageRoot $WorkPackageRoot /MIR /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -gt 7) {
       Fail "robocopy failed with exit code $LASTEXITCODE"
     }
@@ -1478,7 +1478,7 @@ function Add-LocalMarketplace {
   $dest = Join-Path (Join-Path $env:USERPROFILE '.codex\marketplaces') $Name
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null
   Write-Log "copying local marketplace: $Source -> $dest"
-  & robocopy.exe $Source $dest /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+  & robocopy.exe $Source $dest /MIR /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
   if ($LASTEXITCODE -gt 7) {
     Fail "robocopy marketplace failed with exit code $LASTEXITCODE"
   }
@@ -1630,7 +1630,7 @@ setTimeout(() => server.close(() => process.exit(0)), 15000).unref();
     $wireTier = $null
     $codexJob = Start-Job -ScriptBlock {
       param([string]$CodexPath, [string]$BaseUrlConfig)
-      & $CodexPath exec --json --skip-git-repo-check -c $BaseUrlConfig -c 'service_tier="fast"' -c 'model_reasoning_effort="low"' 'wire capture only' 2>&1 | Out-Null
+      & $CodexPath exec --json --skip-git-repo-check -c 'model_provider="openai"' -c $BaseUrlConfig -c 'service_tier="fast"' -c 'model_reasoning_effort="low"' 'wire capture only' 2>&1 | Out-Null
     } -ArgumentList $codex, $baseUrlConfig
 
     $requestDeadline = (Get-Date).AddSeconds(25)

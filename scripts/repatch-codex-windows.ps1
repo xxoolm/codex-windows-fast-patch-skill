@@ -11,6 +11,7 @@ param(
   [switch]$SkipComputerUse,
   [switch]$RegisterMarketplaceOnly,
   [switch]$ForceRebuild,
+  [string]$OutputRoot,
   [switch]$InstallModelInstructionsFile,
   [string]$ModelInstructionsSource,
   [string]$ModelInstructionsDestination = (Join-Path $env:USERPROFILE '.codex\prompts\system-prompt.md')
@@ -398,6 +399,10 @@ if ($DryRun) {
   if (-not $SkipFastVerify) {
     $patchArgs += '-VerifyFastModeRequest'
   }
+}
+if (-not [string]::IsNullOrWhiteSpace($OutputRoot)) {
+  $patchArgs += '-OutputRoot'
+  $patchArgs += $OutputRoot
 }
 
 Invoke-Checked 'powershell' (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PatchScript) + $patchArgs) 'Codex MSIX patch failed'
