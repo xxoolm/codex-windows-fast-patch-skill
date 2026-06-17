@@ -35,7 +35,34 @@ function Remove-DirectoryRobust {
   if ($resolved.Equals($root, $comparison) -or -not $resolved.StartsWith($root + '\', $comparison)) {
     Fail "refusing to recursively delete outside safe root: $resolved"
   }
-  Remove-Item -LiteralPath $resolved -Recurse -Force
+  try {
+    Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction Stop
+  } catch {
+    $node = Get-Command node -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $node) {
+      throw
+    }
+    $script = @'
+const fs = require("node:fs");
+const path = require("node:path");
+const target = path.resolve(process.argv[2]);
+const root = path.resolve(process.argv[3]);
+if (target === root || !target.toLowerCase().startsWith(root.toLowerCase() + path.sep)) {
+  throw new Error(`refusing to delete outside safe root: ${target}`);
+}
+fs.rmSync(target, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
+'@
+    $tempScript = Join-Path $env:TEMP ('codex-remove-tree-' + [guid]::NewGuid().ToString() + '.js')
+    Set-Content -LiteralPath $tempScript -Value $script -Encoding UTF8
+    try {
+      & $node.Source $tempScript $resolved $root
+      if ($LASTEXITCODE -ne 0) {
+        throw
+      }
+    } finally {
+      Remove-Item -LiteralPath $tempScript -Force -ErrorAction SilentlyContinue
+    }
+  }
 }
 
 function Get-RequiredCommand {
@@ -319,7 +346,10 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $workRoot = Join-Path $OutputRoot ("work-" + $pkg.Version + "-" + $stamp)
 $workPackageRoot = Join-Path $workRoot 'package'
 $asarDir = Join-Path $workRoot 'app-asar'
+$npxCache = Join-Path $workRoot 'npm-cache'
 $msixPath = Join-Path $OutputRoot ("OpenAI.Codex_" + $pkg.Version + "_remote-control-patched.msix")
+$scriptSucceeded = $false
+$installedSuccessfully = $false
 
 if ((Test-Path -LiteralPath $workRoot) -and $ForceRebuild) {
   Remove-DirectoryRobust -Path $workRoot -RequiredRoot $OutputRoot
@@ -345,7 +375,7 @@ try {
   }
 
   Write-Log "extracting ASAR"
-  & $npx --yes asar extract $workAsar $asarDir
+  & $npx --yes --cache $npxCache asar extract $workAsar $asarDir
   if ($LASTEXITCODE -ne 0) {
     Fail "npx asar extract failed with exit code $LASTEXITCODE"
   }
@@ -425,7 +455,7 @@ try {
   }
 
   Write-Log "packing patched ASAR"
-  & $npx --yes asar pack $asarDir $workAsar
+  & $npx --yes --cache $npxCache asar pack $asarDir $workAsar
   if ($LASTEXITCODE -ne 0) {
     Fail "npx asar pack failed with exit code $LASTEXITCODE"
   }
@@ -458,8 +488,9 @@ try {
   }
 
   if ($DryRun) {
-    Write-Log "dry run complete; patched package root kept at: $workPackageRoot"
+    Write-Log "dry run complete; patched package root validated at: $workPackageRoot"
     Write-Log "dry run markers: remote_control_desktop_fetch_override_used, remote_control_appserver_bh_isolated_auth_fallback, remote_control_mobile_setup_no_auth_redirect, remote_control_mobile_setup_authorize_before_enable, remote_control_settings_force_control_this_pc_visible, remote_control_settings_force_remote_control_section_visible"
+    $scriptSucceeded = $true
     return
   }
 
@@ -499,6 +530,7 @@ try {
     Add-AppxPackage -Path $msixPath -ErrorAction Stop
     $installed = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop | Select-Object -First 1
     Write-Log "installed package: $($installed.PackageFullName)"
+    $installedSuccessfully = $true
     if ($Launch) {
       $exe = Join-Path $installed.InstallLocation 'app\Codex.exe'
       Write-Log "launching Codex: $exe"
@@ -507,14 +539,32 @@ try {
   } else {
     Write-Log "patched MSIX ready: $msixPath"
   }
+  $scriptSucceeded = $true
 } finally {
-  if ($KeepWorkDir -or $DryRun) {
+  if ($KeepWorkDir -or -not $scriptSucceeded) {
     Write-Log "keeping workdir: $workRoot"
   } elseif (Test-Path -LiteralPath $workRoot) {
     try {
       Remove-DirectoryRobust -Path $workRoot -RequiredRoot $OutputRoot
     } catch {
       Write-Log "warning: cleanup failed, leaving workdir for inspection: $workRoot ($($_.Exception.Message))"
+    }
+  }
+  if ($installedSuccessfully -and -not $KeepWorkDir -and (Test-Path -LiteralPath $msixPath -PathType Leaf)) {
+    try {
+      Remove-Item -LiteralPath $msixPath -Force -ErrorAction Stop
+      Write-Log "removed installed patched MSIX artifact: $msixPath"
+    } catch {
+      Write-Log "warning: could not remove installed patched MSIX artifact: $msixPath ($($_.Exception.Message))"
+    }
+  }
+  $sdkCacheRoot = Join-Path $env:TEMP 'codex-remote-control-sdk-buildtools'
+  if ($installedSuccessfully -and -not $KeepWorkDir -and (Test-Path -LiteralPath $sdkCacheRoot)) {
+    try {
+      Remove-DirectoryRobust -Path $sdkCacheRoot -RequiredRoot $env:TEMP
+      Write-Log "removed temporary Windows SDK BuildTools cache: $sdkCacheRoot"
+    } catch {
+      Write-Log "warning: could not remove temporary Windows SDK BuildTools cache: $sdkCacheRoot ($($_.Exception.Message))"
     }
   }
 }

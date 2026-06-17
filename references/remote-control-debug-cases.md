@@ -23,22 +23,24 @@ Get-AppxPackage -Name OpenAI.Codex | Select-Object Name,PackageFullName,Version,
 3. If the settings page hides the phone setup entry, QR spins forever, setup redirects to ChatGPT login, or the allow dialog says `Couldn't enable remote control`, use the remote-control MSIX patch script:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun -KeepWorkDir
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun
 ```
 
 4. If the system drive is tight, pass an alternate output root on any drive with enough free space. This is optional; do not hard-code a drive letter in the workflow:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun -KeepWorkDir -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun -OutputRoot "<large-local-build-root>"
 ```
 
 5. If a patched native app-server binary is available, pass it explicitly:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun -KeepWorkDir -ReplacementResourceCodexExe "<path-to-built-codex.exe>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun -ReplacementResourceCodexExe "<path-to-built-codex.exe>"
 ```
 
 6. After dry-run succeeds, rerun with `-Install -Launch -InstallPrerequisites`. Stop only WindowsApps Codex Desktop processes; do not kill Antigravity/extension-host Codex sessions unless the user explicitly asks.
+
+7. After successful repair, delete or let the script delete generated MSIX staging, ASAR extraction, temporary patched `.msix`, script-local `npx` cache, live verification extracts, copied SQLite/log probes, and temporary Windows SDK BuildTools. Keep reusable native build outputs and source checkouts if they avoid a costly rebuild next time. Keep auth/config/sqlite state and explicit backups unless the user asks for backup pruning.
 
 ## ASAR Patch Expectations
 

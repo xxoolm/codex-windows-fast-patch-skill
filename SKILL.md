@@ -111,22 +111,22 @@ Before repairing phone remote control, read `references/remote-control-debug-cas
 - Remote-control OAuth is isolated: use `.codex\remote-control-oauth.json` and `.codex\remote.json`; never use `.codex\auth.json` for the remote-control bearer injection path.
 - An alternate build root is only an optional `-OutputRoot` choice for machines with low system-drive space. Do not hard-code a drive letter into the workflow.
 
-Run a dry run first:
+Run a dry run first. Do not pass `-KeepWorkDir` unless you need to inspect failed patch artifacts; successful dry-runs should clean generated package and ASAR extraction output:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun -KeepWorkDir
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun
 ```
 
 If the machine needs a larger temporary build location, pass it explicitly:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun -KeepWorkDir -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun -OutputRoot "<large-local-build-root>"
 ```
 
 If a patched native `app\resources\codex.exe` was built from the Codex Rust source, pass it explicitly:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun -KeepWorkDir -ReplacementResourceCodexExe "<path-to-built-codex.exe>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun -ReplacementResourceCodexExe "<path-to-built-codex.exe>"
 ```
 
 Only after dry-run markers pass, install and relaunch:
@@ -134,6 +134,8 @@ Only after dry-run markers pass, install and relaunch:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -Install -Launch -InstallPrerequisites -ReplacementResourceCodexExe "<path-to-built-codex.exe>"
 ```
+
+Cleanup policy: successful remote-control script runs delete generated MSIX staging directories, ASAR extracts, script-local `npx` cache, installed patched `.msix` artifacts, and temporary Windows SDK BuildTools. Keep only reusable inputs such as the patched native `codex.exe` build, source checkout, auth/config/sqlite state, and explicit backups. Use `-KeepWorkDir` only for a failed or actively debugged run.
 
 If phone-created turns reach Desktop but fail against the wrong model API endpoint, inspect the concrete request URL, `config.toml`, and the affected thread/session metadata before changing anything. Treat this as a post-pairing configuration diagnosis, not as part of remote-control pairing. Preserve conversation history and do not change `model_provider` ids just to change a URL.
 
@@ -191,7 +193,8 @@ Remove-Item Env:ELECTRON_ENABLE_LOGGING -ErrorAction SilentlyContinue
 
 Phone remote-control script options:
 
-- `scripts\patch-remote-control-windows-msix.ps1 -DryRun -KeepWorkDir`: patch and validate extracted package without installing.
+- `scripts\patch-remote-control-windows-msix.ps1 -DryRun`: patch and validate extracted package without installing, then clean successful generated artifacts.
+- `-KeepWorkDir`: keep MSIX staging, ASAR extract, and script-local `npx` cache for debugging; avoid this on routine repairs because each kept run can consume multiple GB.
 - `-OutputRoot <path>`: optional large local build root; use it when the default temp drive is short on space.
 - `-ReplacementResourceCodexExe <path>`: copy in a patched native app-server binary and verify remote-control markers before packaging.
 - `-Install -Launch -InstallPrerequisites`: sign, install, and relaunch the patched package after dry-run passes.
