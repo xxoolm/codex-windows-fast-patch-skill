@@ -552,9 +552,9 @@ function patchPluginPageAuth(file) {
     process.stderr.write('plugin-page-auth-target-not-found\n');
     process.exit(2);
   }
-  if (/\{authMethod:\w+\}=[A-Za-z_$][\w$]*\(\),\w+=!1,/.test(text)) return;
+  if (/\{authMethod:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*\(\),[A-Za-z_$][\w$]*=!1,/.test(text)) return;
 
-  const originalRe = /\{authMethod:(\w+)\}=([A-Za-z_$][\w$]*)\(\),(\w+)=([A-Za-z_$][\w$]*)\(\1\),/;
+  const originalRe = /\{authMethod:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(\),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\1\),/;
   const next = text.replace(originalRe, (_match, authMethodVar, authHook, blockedVar) =>
     `{authMethod:${authMethodVar}}=${authHook}(),${blockedVar}=!1,`
   );
@@ -777,12 +777,24 @@ function patchFeatureHook(file) {
     'let s={enabled:!0,isLoading:!1},l=!0,u=!1,d;'
   );
   after = after.replace(
+    /let ([A-Za-z_$][\w$]*)=x\(([A-Za-z_$][\w$]*)\),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`chrome-extension`\|\|([A-Za-z_$][\w$]*)&&\1\.enabled&&!\1\.isLoading,([A-Za-z_$][\w$]*)=\4===`chrome-extension`\?!1:\1\.isLoading,([A-Za-z_$][\w$]*);/,
+    'let $1={enabled:!0,isLoading:!1},$3=!0,$6=!1,$7;'
+  );
+  after = after.replace(
     /i=n\(m\),a=c\(`410262010`\),l;/,
     'i=!0,a=!0,l;'
   );
   after = after.replace(
+    /([A-Za-z_$][\w$]*)=r\(g\),([A-Za-z_$][\w$]*)=u\(`410262010`\),([A-Za-z_$][\w$]*);/,
+    '$1=!0,$2=!0,$3;'
+  );
+  after = after.replace(
     /let u=g\(l\),d=s\(o\.runCodexInWsl\),f=u\.enabled&&!u\.isLoading,p=u\.isLoading,_=d===!0,v;/,
     'let u={enabled:!0,isLoading:!1},d=!1,f=!0,p=!1,_=!1,v;'
+  );
+  after = after.replace(
+    /let ([A-Za-z_$][\w$]*)=x\(([A-Za-z_$][\w$]*)\),([A-Za-z_$][\w$]*)=l\(c\.runCodexInWsl\),([A-Za-z_$][\w$]*)=\1\.enabled&&!\1\.isLoading,([A-Za-z_$][\w$]*)=\1\.isLoading,([A-Za-z_$][\w$]*)=\3===!0,([A-Za-z_$][\w$]*);/,
+    'let $1={enabled:!0,isLoading:!1},$3=!1,$4=!0,$5=!1,$6=!1,$7;'
   );
 
   if (after === before &&
@@ -791,7 +803,9 @@ function patchFeatureHook(file) {
       !before.includes('let p={enabled:!0,isLoading:!1},m=!1,h=!0,_=!1,v=!1,y;') &&
       !before.includes('let s={enabled:!0,isLoading:!1},l=!0,u=!1,d;') &&
       !before.includes('i=!0,a=!0,l;') &&
-      !before.includes('let u={enabled:!0,isLoading:!1},d=!1,f=!0,p=!1,_=!1,v;')) {
+      !before.includes('let u={enabled:!0,isLoading:!1},d=!1,f=!0,p=!1,_=!1,v;') &&
+      !/\{enabled:!0,isLoading:!1\},[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=!1/.test(before) &&
+      !/[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*;/.test(before)) {
     process.stderr.write('browser-use-feature-hook-patch-target-not-found\n');
     process.exit(2);
   }
@@ -825,14 +839,15 @@ function patchSidebarAvailability(file) {
 function patchDesktopFeatureSender(file) {
   const before = read(file);
   const patchedSenderFragment = 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:';
+  const patchedSenderPattern = /inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(linksDefaultInAppBrowser:[^,}]+,)?browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:/;
   if (!before.includes('browser_use_availability_resolved') || !before.includes('electron-desktop-features-changed')) {
     process.stderr.write('browser-use-desktop-feature-sender-target-not-found\n');
     process.exit(2);
   }
 
   let after = before.replace(
-    /inAppBrowserUse:[A-Za-z_$][\w$]*\.available,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.allowed,browserPane:[A-Za-z_$][\w$]*,externalBrowserUse:[A-Za-z_$][\w$]*\.available,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.allowed,computerUse:/,
-    'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:'
+    /inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,(linksDefaultInAppBrowser:[^,}]+,)?browserPane:[^,}]+,externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,computerUse:/,
+    'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,$1browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:'
   );
   after = after.replace(
     /browser_use_availability_resolved`,\{safe:\{available:[^,]+,platform:([^,]+),reason:[^,]+,release:([^}]+)\},sensitive:\{browserPane:[^}]+\}\}\)/,
@@ -840,7 +855,8 @@ function patchDesktopFeatureSender(file) {
   );
 
   if (after === before &&
-      !before.includes(patchedSenderFragment)) {
+      !before.includes(patchedSenderFragment) &&
+      !patchedSenderPattern.test(before)) {
     process.stderr.write('browser-use-desktop-feature-sender-patch-target-not-found\n');
     process.exit(2);
   }
@@ -850,9 +866,11 @@ function patchDesktopFeatureSender(file) {
 function patchDesktopFeatureMain(file) {
   const before = read(file);
   const patchedMainFragment = 'browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0';
+  const envGatePattern = /[A-Za-z_$][\w$]*=i===`win32`&&[A-Za-z_$][\w$]*\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.[A-Za-z_$][\w$]*,computerUse:!0,computerUseNodeRepl:!0\}:[A-Za-z_$][\w$]*/;
   if (!before.includes(patchedMainFragment) &&
       (!before.includes('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE') ||
-       !/inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,browserPane:[A-Za-z_$][\w$]*\.browserPane,externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed/.test(before))) {
+       (!envGatePattern.test(before) &&
+        !/inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,browserPane:[A-Za-z_$][\w$]*\.browserPane,externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed/.test(before)))) {
     process.stderr.write('browser-use-desktop-feature-main-target-not-found\n');
     process.exit(2);
   }
@@ -967,8 +985,8 @@ function Find-PatchTargets {
   foreach ($candidate in $desktopFeatureSenderCandidates) {
     $text = Get-Content -Raw -LiteralPath $candidate
     if ($text.Contains('electron-desktop-features-changed') -and
-        (($text -match 'inAppBrowserUse:[A-Za-z_$][\w$]*\.available,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.allowed,browserPane:[A-Za-z_$][\w$]*,externalBrowserUse:[A-Za-z_$][\w$]*\.available,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.allowed,computerUse:[A-Za-z_$][\w$]*\.available') -or
-         $text.Contains('inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0'))) {
+        (($text -match 'inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,(linksDefaultInAppBrowser:[^,}]+,)?browserPane:[^,}]+,externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,computerUse:[^,}]+') -or
+         ($text -match 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(linksDefaultInAppBrowser:[^,}]+,)?browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0'))) {
       $desktopFeatureSenderTarget = $candidate
       break
     }
@@ -983,7 +1001,8 @@ function Find-PatchTargets {
     foreach ($candidate in $desktopFeatureMainCandidates) {
       $text = Get-Content -Raw -LiteralPath $candidate
       if ($text.Contains('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE') -and
-          (($text -match 'inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,browserPane:[A-Za-z_$][\w$]*\.browserPane,externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed') -or
+          (($text -match '[A-Za-z_$][\w$]*=i===`win32`&&[A-Za-z_$][\w$]*\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.[A-Za-z_$][\w$]*,computerUse:!0,computerUseNodeRepl:!0\}:[A-Za-z_$][\w$]*') -or
+           ($text -match 'inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,browserPane:[A-Za-z_$][\w$]*\.browserPane,externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed') -or
            $text.Contains('browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0'))) {
         $desktopFeatureMainTarget = $candidate
         break
@@ -998,8 +1017,8 @@ function Find-PatchTargets {
     $text = Get-Content -Raw -LiteralPath $candidate
     if ($text.Contains('openPluginInstall') -and
         $text.Contains('authMethod:') -and
-        (($text -match '\{authMethod:\w+\}=[A-Za-z_$][\w$]*\(\),\w+=[A-Za-z_$][\w$]*\(\w+\),') -or
-         ($text -match '\{authMethod:\w+\}=[A-Za-z_$][\w$]*\(\),\w+=!1,'))) {
+        (($text -match '\{authMethod:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*\(\),[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),') -or
+         ($text -match '\{authMethod:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*\(\),[A-Za-z_$][\w$]*=!1,'))) {
       $pluginPageAuthTarget = $candidate
       break
     }
