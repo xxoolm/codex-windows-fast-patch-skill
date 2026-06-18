@@ -73,9 +73,12 @@ Symptoms:
 - Desktop logs contain `computer-use native pipe startup failed` and `missing-helper-path`.
 - `codex plugin list` may show bundled plugins missing, disabled, or marketplace load errors.
 - The failure comes back after fully quitting Codex Desktop and reopening it.
+- A previous repair attempt made Codex Desktop exit or disappear because the agent ran the full MSIX repack for a local plugin/cache problem.
 
 Checks:
 
+- Run `codex plugin list` before package operations. If `chrome@openai-bundled`, `browser@openai-bundled`, or `computer-use@openai-bundled` are missing, disabled, or blocked by a marketplace snapshot error, treat that as local bundled marketplace evidence first.
+- Run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` before package operations. A failure on a stale Chrome native messaging manifest, missing `latest` link, missing helper path, missing plugin file, or `@oai/sky` import/runtime path is local repair evidence.
 - Inspect `%USERPROFILE%\.codex\.tmp\bundled-marketplaces\openai-bundled\.agents\plugins\marketplace.json`.
 - Inspect `%USERPROFILE%\.codex\.tmp\bundled-marketplaces\openai-bundled\plugins\computer-use`.
 - Inspect running `extension-host` processes whose paths are under `%USERPROFILE%\.codex\plugins\cache\openai-bundled`.
@@ -83,11 +86,13 @@ Checks:
 
 Action:
 
+- Do not start with the full MSIX repack for this symptom class. The full repack removes and reinstalls the `OpenAI.Codex` package and can make the running Desktop app disappear; use it only after evidence shows a Desktop ASAR/UI gate is still closed.
 - Stop only those bundled `extension-host` processes when they are locking the bundled marketplace mirror.
 - Rerun `scripts\install-computer-use-local.ps1`.
 - Restart Codex Desktop.
 - Confirm the latest Desktop log ends with `computer-use native pipe startup ready`.
 - If `-StrictVerifyOnly` fails because `plugins\cache\openai-bundled\computer-use\latest\.codex-plugin\plugin.json` is missing, run `-VerifyOnly` once to rebuild the cached plugin and `latest` link, then rerun `-StrictVerifyOnly`.
+- Escalate to the MSIX workflow only if local repair succeeds but logs or extracted ASAR checks still show settings/UI availability gates are blocking Computer Use or browser_use, such as `browser_use_availability_resolved` with `reason=statsig-disabled` or Computer Use/Any App disabled by a Desktop gate.
 
 ## Computer Use Task Fails Before App Interaction
 

@@ -47,15 +47,16 @@ Do not proceed with a config write if the backup of an existing config fails. Af
 
 ## Workflow Selection
 
-Before choosing the full MSIX repack path, identify whether the current failure is a Desktop bundle gate or a local plugin/runtime repair.
+Before choosing the full MSIX repack path, identify whether the current failure is a Desktop bundle gate or a local plugin/runtime repair. Do not treat a vague "Chrome/Computer Use is unavailable" report as enough evidence to run the full repatch.
 
 - Use the full repatch workflow for Fast Mode, locale, plugin UI gates, browser_use Desktop gates, Goal gates, ASAR integrity, and settings/UI availability gates.
-- Use the Computer Use Only workflow first when the visible failure is a Computer Use task/runtime problem: native pipe unavailable, missing helper path, bundled plugin cache drift, Chrome/browser cache link drift, stale `SKY_CUA_NATIVE_PIPE` config, `@oai/sky` import errors, or `setupComputerUseRuntime` import failure.
+- Use the Computer Use Only workflow first when evidence points to a local plugin/runtime problem: `codex plugin list` marketplace errors, missing `.agents\plugins\marketplace.json`, missing or partial `openai-bundled` plugin files, `bundled_plugins_marketplace_resolve_failed`, `EBUSY` on bundled plugin files, native pipe unavailable, `missing-helper-path`, stale Chrome native messaging host paths, bundled plugin cache drift, Chrome/browser cache link drift, stale `SKY_CUA_NATIVE_PIPE` config, `@oai/sky` import errors, or `setupComputerUseRuntime` import failure. This class does not require an MSIX uninstall/reinstall unless a later check also proves a Desktop gate is still closed.
 - Use the Phone Remote Control workflow when the user needs mobile pairing/control, the Connections page hides the phone setup card, the QR dialog spins, remote-control setup jumps to ChatGPT auth, the Allow dialog fails, the phone says the Codex environment version expired, or phone-created turns reach Desktop but send model requests to the wrong API endpoint.
 - If the user asks for Phone Remote Control and ordinary Desktop features in the same repair, patch Phone Remote Control first, then verify Fast Mode/browser/Chrome/Computer Use. If the remote-control MSIX install disturbs Computer Use or Chrome native-host state, immediately run the Computer Use Only workflow and re-run `-StrictVerifyOnly`.
 - Do not infer that a new `resources\codex.exe` PE file means `app.asar` is gone or that Computer Use needs binary patching. Inspect the current package resources first. If `app.asar` still exists and the symptom is a plugin/runtime import or cache failure, run `scripts\install-computer-use-local.ps1` before considering MSIX or binary changes.
 - After a Computer Use-only repair, always run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly`. Treat `client import ok` plus `helper transport ok` as the local repair success signal.
 - Do not put Phone Remote Control into the default full repatch path unless the user asked for it. It is an opt-in workflow because it can require isolated remote-control OAuth, ASAR changes, a native app-server replacement binary, SQLite enrollment cleanup, and post-pairing API endpoint diagnosis.
+- If evidence is mixed, use the lowest-disruption path first: run read-only triage, then `scripts\install-computer-use-local.ps1 -VerifyOnly` for local plugin evidence, restart Codex Desktop only if needed, and escalate to MSIX only when logs or extracted ASAR checks still show a closed gate.
 
 ## Default Workflow
 
@@ -71,13 +72,30 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 Get-AppxPackage -Name OpenAI.Codex | Select-Object Name,PackageFullName,Version,SignatureKind,InstallLocation
 ```
 
-3. If Workflow Selection points to a Computer Use-only failure, skip the MSIX dry run and go directly to the Computer Use Only section. Otherwise, run a dry run first after every Codex upgrade:
+3. Run read-only feature triage before any package reinstall. Capture the decision evidence, especially for Chrome/Computer Use:
+
+```powershell
+codex plugin list
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\install-computer-use-local.ps1" -StrictVerifyOnly
+```
+
+If `-StrictVerifyOnly` fails on a missing marketplace manifest, missing plugin files, stale `latest` link, stale Chrome native messaging manifest, missing helper path, or `@oai/sky` import/runtime issue, run the Computer Use Only repair first:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\install-computer-use-local.ps1" -VerifyOnly
+```
+
+This local repair may update config, plugin cache, Chrome native host paths, user environment, and helper runtime files, but it does not uninstall or reinstall the Codex MSIX package.
+
+4. Escalate to MSIX only when the evidence points to package-gated Desktop code: Fast Mode request/UI gates, locale gate, Goal/plugin UI gate, browser_use availability with `reason=statsig-disabled`, Computer Use/Any App disabled by settings/UI availability gates after local repair, ASAR integrity failure, or Phone Remote Control package patches. Otherwise do not run the full repatch just because a plugin is unavailable.
+
+Run a dry run first after every Codex upgrade when MSIX escalation is justified:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\repatch-codex-windows.ps1" -DryRun
 ```
 
-4. If the dry run finds all patch targets, run the full repatch:
+5. If the dry run finds all patch targets, run the full repatch:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\repatch-codex-windows.ps1"
@@ -144,6 +162,7 @@ If phone-created turns reach Desktop but fail against the wrong model API endpoi
 
 ## Important Guardrails
 
+- The full MSIX install path removes the existing `OpenAI.Codex` package and installs a patched package. If run from inside Codex Desktop, the app can disappear or exit while the script continues. Use that path only when package-gated Desktop code must be patched; for local Chrome/Computer Use marketplace/cache/native-host/runtime failures, use the Computer Use Only workflow instead.
 - Do not modify `C:\Program Files\WindowsApps` in place. Use the MSIX repack script.
 - Do not run the phone remote-control MSIX patch as a default repatch side effect. Use it only for phone remote-control tasks or when the user explicitly asks for that workflow.
 - Do not trust a response like `FAST_CHECK_OK` as proof of Fast Mode. Trust only the wrapper/script wire verification, which captures Codex's `/v1/responses` WebSocket request and checks `service_tier=priority`.
