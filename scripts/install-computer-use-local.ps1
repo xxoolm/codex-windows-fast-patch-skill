@@ -555,6 +555,12 @@ function Patch-ComputerUseClientScript {
     return
   }
 
+  $usesNodeReplRuntimePath = $content.Contains('getWindowsComputerUseClientBasePath()') -and $content.Contains('NODE_REPL_NODE_MODULE_DIRS')
+  if ($usesNodeReplRuntimePath) {
+    Write-Log "Computer Use client already resolves Windows runtime through nodeRepl env: $ClientPath"
+    return
+  }
+
   $oldImport = 'import { WindowsComputerUseClientBase } from "@oai/sky/dist/project/cua/sky_js/src/targets/windows/internal/computer_use_client_base.js";'
   if (-not $content.Contains($oldImport)) {
     throw "Computer Use client import anchor not found in: $ClientPath"
@@ -1155,6 +1161,14 @@ function Test-ComputerUseClientImport {
   $script = @'
 import { pathToFileURL } from "node:url";
 
+globalThis.nodeRepl = {
+  config: {},
+  env: {
+    NODE_REPL_NODE_MODULE_DIRS: process.argv[3],
+  },
+  nativePipe: {},
+};
+
 const mod = await import(pathToFileURL(process.argv[2]).href);
 if (typeof mod.setupComputerUseRuntime !== "function") {
   throw new Error("setupComputerUseRuntime export is missing");
@@ -1171,7 +1185,7 @@ console.log(JSON.stringify({ ok: true, exports: Object.keys(mod).sort() }));
     # The Codex Node REPL resolves bare packages from runtime search roots, not
     # from the imported plugin file's local node_modules. Verify that shape.
     [Environment]::SetEnvironmentVariable('NODE_PATH', $runtimeNodeModules, 'Process')
-    $output = & $node.Source $temp $tempClient
+    $output = & $node.Source $temp $tempClient $runtimeNodeModules
     if ($LASTEXITCODE -ne 0) {
       throw "Computer Use client import verification failed for $ClientPath"
     }

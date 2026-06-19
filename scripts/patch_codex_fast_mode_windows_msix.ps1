@@ -589,11 +589,11 @@ function patchPluginPageAuth(file) {
     process.stderr.write('plugin-page-auth-target-not-found\n');
     process.exit(2);
   }
-  if (/\{authMethod:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*\(\),[A-Za-z_$][\w$]*=!1,/.test(text)) return;
+  if (/\{authMethod:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*\(\),(?:\{data:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*\(\),)?[A-Za-z_$][\w$]*=!1,/.test(text)) return;
 
-  const originalRe = /\{authMethod:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(\),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\1\),/;
-  const next = text.replace(originalRe, (_match, authMethodVar, authHook, blockedVar) =>
-    `{authMethod:${authMethodVar}}=${authHook}(),${blockedVar}=!1,`
+  const originalRe = /\{authMethod:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(\),((?:\{data:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*\(\),)?)([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\1\),/;
+  const next = text.replace(originalRe, (_match, authMethodVar, authHook, middle, blockedVar) =>
+    `{authMethod:${authMethodVar}}=${authHook}(),${middle}${blockedVar}=!1,`
   );
   if (next === text) {
     process.stderr.write('plugin-page-auth-patch-target-not-found\n');
@@ -642,6 +642,7 @@ const slashPatchedRe = /score:Math\.max\([A-Za-z_$][\w$]*\(e\.title,\w+\),[A-Za-
 const cmdkSlashRe = /cmdk-item/;
 const cmdkKeywordSearchRe = /keywords:\w+|keywords,\.\.\./;
 const goalCommandRe = /id:`goal`,title:[^,]+,description:[^,]+,requiresEmptyComposer:!1,[^}]*enabled:[^,]+/;
+const currentGoalAlreadyOpenRe = /[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*!==`cloud`&&!?[A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)\?\?!1/;
 
 let nextComposer = composerText;
 let nextSlash = slashText;
@@ -676,7 +677,10 @@ if (goalOriginalRe.test(nextComposer)) {
 } else if (currentGoalOriginalRe.test(nextComposer)) {
   nextComposer = nextComposer.replace(currentGoalOriginalRe, (_match, goalGateVar, _statsigFn, _configAccessFn, _configVar, modeVar, sideChatGuard = '', hasGoalVar, hasGoalExpr) => `${goalGateVar}=${modeVar}!==\`cloud\`${sideChatGuard},${hasGoalVar}=${hasGoalExpr},`);
   changedComposer = true;
-} else if (!(goalPatchedRe.test(nextComposer) || currentSplitGoalPatchedRe.test(nextComposer) || (goalCommandRe.test(nextComposer) && nextComposer.includes('threadGoalObjective')))) {
+} else if (!(goalPatchedRe.test(nextComposer) ||
+             currentSplitGoalPatchedRe.test(nextComposer) ||
+             currentGoalAlreadyOpenRe.test(nextComposer) ||
+             (goalCommandRe.test(nextComposer) && nextComposer.includes('threadGoalObjective')))) {
   process.stderr.write('goal-patch-target-not-found\n');
   process.exit(2);
 }
@@ -818,11 +822,19 @@ function patchFeatureHook(file) {
     'let $1={enabled:!0,isLoading:!1},$3=!0,$6=!1,$7;'
   );
   after = after.replace(
+    /let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`chrome-extension`\|\|([A-Za-z_$][\w$]*)&&\1\.enabled&&!\1\.isLoading,([A-Za-z_$][\w$]*)=\3===`chrome-extension`\?!1:\1\.isLoading,([A-Za-z_$][\w$]*);/,
+    'let $1={enabled:!0,isLoading:!1},$2=!0,$5=!1,$6;'
+  );
+  after = after.replace(
     /i=n\(m\),a=c\(`410262010`\),l;/,
     'i=!0,a=!0,l;'
   );
   after = after.replace(
     /([A-Za-z_$][\w$]*)=r\(g\),([A-Za-z_$][\w$]*)=u\(`410262010`\),([A-Za-z_$][\w$]*);/,
+    '$1=!0,$2=!0,$3;'
+  );
+  after = after.replace(
+    /([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(`410262010`\),([A-Za-z_$][\w$]*);/,
     '$1=!0,$2=!0,$3;'
   );
   after = after.replace(
@@ -832,6 +844,10 @@ function patchFeatureHook(file) {
   after = after.replace(
     /let ([A-Za-z_$][\w$]*)=x\(([A-Za-z_$][\w$]*)\),([A-Za-z_$][\w$]*)=l\(c\.runCodexInWsl\),([A-Za-z_$][\w$]*)=\1\.enabled&&!\1\.isLoading,([A-Za-z_$][\w$]*)=\1\.isLoading,([A-Za-z_$][\w$]*)=\3===!0,([A-Za-z_$][\w$]*);/,
     'let $1={enabled:!0,isLoading:!1},$3=!1,$4=!0,$5=!1,$6=!1,$7;'
+  );
+  after = after.replace(
+    /let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(c\.runCodexInWsl\),([A-Za-z_$][\w$]*)=\1\.enabled&&!\1\.isLoading,([A-Za-z_$][\w$]*)=\1\.isLoading,([A-Za-z_$][\w$]*)=\2===!0,([A-Za-z_$][\w$]*);/,
+    'let $1={enabled:!0,isLoading:!1},$2=!1,$3=!0,$4=!1,$5=!1,$6;'
   );
 
   if (after === before &&
@@ -876,15 +892,15 @@ function patchSidebarAvailability(file) {
 function patchDesktopFeatureSender(file) {
   const before = read(file);
   const patchedSenderFragment = 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:';
-  const patchedSenderPattern = /inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(linksDefaultInAppBrowser:[^,}]+,)?browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:/;
+  const patchedSenderPattern = /inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:/;
   if (!before.includes('browser_use_availability_resolved') || !before.includes('electron-desktop-features-changed')) {
     process.stderr.write('browser-use-desktop-feature-sender-target-not-found\n');
     process.exit(2);
   }
 
   let after = before.replace(
-    /inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,(linksDefaultInAppBrowser:[^,}]+,)?browserPane:[^,}]+,externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,computerUse:/,
-    'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,$1browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:'
+    /inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:[^,}]+,externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,computerUse:/,
+    'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,$1$2browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:'
   );
   after = after.replace(
     /browser_use_availability_resolved`,\{safe:\{available:[^,]+,platform:([^,]+),reason:[^,]+,release:([^}]+)\},sensitive:\{browserPane:[^}]+\}\}\)/,
@@ -1022,8 +1038,8 @@ function Find-PatchTargets {
   foreach ($candidate in $desktopFeatureSenderCandidates) {
     $text = Get-Content -Raw -LiteralPath $candidate
     if ($text.Contains('electron-desktop-features-changed') -and
-        (($text -match 'inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,(linksDefaultInAppBrowser:[^,}]+,)?browserPane:[^,}]+,externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,computerUse:[^,}]+') -or
-         ($text -match 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(linksDefaultInAppBrowser:[^,}]+,)?browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0'))) {
+        (($text -match 'inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:[^,}]+,externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,computerUse:[^,}]+') -or
+         ($text -match 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0'))) {
       $desktopFeatureSenderTarget = $candidate
       break
     }
@@ -1054,8 +1070,8 @@ function Find-PatchTargets {
     $text = Get-Content -Raw -LiteralPath $candidate
     if ($text.Contains('openPluginInstall') -and
         $text.Contains('authMethod:') -and
-        (($text -match '\{authMethod:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*\(\),[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),') -or
-         ($text -match '\{authMethod:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*\(\),[A-Za-z_$][\w$]*=!1,'))) {
+      (($text -match '\{authMethod:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*\(\),(?:\{data:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*\(\),)?[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),') -or
+       ($text -match '\{authMethod:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*\(\),(?:\{data:[A-Za-z_$][\w$]*\}=[A-Za-z_$][\w$]*\(\),)?[A-Za-z_$][\w$]*=!1,'))) {
       $pluginPageAuthTarget = $candidate
       break
     }
@@ -1090,10 +1106,11 @@ function Find-PatchTargets {
   }
 
   $goalComposerTarget = $null
-  foreach ($candidate in (Invoke-RgList $RgPath 'threadGoalObjective' $assetsDir)) {
+  foreach ($candidate in (Invoke-RgList $RgPath 'threadGoalObjective|composer.goalSlashCommand.title' $assetsDir)) {
     $text = Get-Content -Raw -LiteralPath $candidate
     if (($text.Contains('3074100722') -and $text.Contains('goals')) -or
         ($text.Contains('composer.goalSlashCommand.title') -and $text -match 'id:`goal`,title:[^,]+,description:[^,]+,requiresEmptyComposer:!1,[^}]*enabled:[^,]+') -or
+        ($text.Contains('composer.goalSlashCommand.title') -and $text -match '[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*!==`cloud`&&!?[A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)\?\?!1') -or
         ($text -match '(\w+)=[A-Za-z_$][\w$]*!==`cloud`&&!\w+,(\w+)=')) {
       $goalComposerTarget = $candidate
       break
