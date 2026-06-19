@@ -41,6 +41,31 @@ Action:
 - Update script search logic when asset filenames drift between Codex Desktop versions.
 - For the newer plugin page auth shape, force only the local auth-blocked variable to `false`; do not require the old sidebar, skills-page, and detail-page chunks to exist.
 
+## New Chat Fails With Missing inputSchema
+
+Symptoms:
+
+- Codex Desktop cannot create a new conversation or local task.
+- The UI shows errors such as `创建任务时出错`, `启动对话时出错`, or the phrase `missing field inputSchema`.
+- The newest Desktop log contains `method=thread/start` and the phrase `missing field inputSchema`.
+- The failure happens before model sampling, before Computer Use app interaction, and before phone remote-control transport.
+
+Checks:
+
+- Inspect the newest non-empty Desktop log under `%LOCALAPPDATA%\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\Codex\Logs\<year>\<month>\<day>`.
+- Run `codex mcp list` and identify recently added or custom MCP servers first, especially local servers that expose many tools.
+- Back up `%USERPROFILE%\.codex\config.toml` before changing MCP sections.
+- Disable one suspect MCP server at a time by commenting or removing only its `[mcp_servers.<name>]` block and any `[mcp_servers.<name>.env]` subtable, then validate the TOML with Python `tomllib`.
+- Run `codex exec --skip-git-repo-check --ephemeral --json "只输出 OK"` as a low-cost thread-start smoke test after each isolation step.
+- If CLI thread start succeeds but Desktop still fails, Desktop is probably still using stale app-server or MCP child processes. Stop only the stale MCP server process when possible, or fully quit and relaunch Codex Desktop.
+
+Action:
+
+- Treat this as an MCP schema compatibility issue, not as a Fast Mode, Phone Remote Control, Computer Use, or ASAR integrity issue.
+- Do not run the full MSIX repack for this symptom unless separate logs prove a Desktop bundle gate is closed.
+- Keep the disabled MCP block commented in `config.toml` with a short dated note so it can be restored after the MCP server or adapter is repaired.
+- If a remote OAuth MCP such as Cloudflare also reports an `invalid_grant` during smoke tests, fix that separately; it is not the same failure as `missing field inputSchema` unless thread start still fails.
+
 ## Browser Use Or Chrome Still Shows Unavailable
 
 Symptoms:
