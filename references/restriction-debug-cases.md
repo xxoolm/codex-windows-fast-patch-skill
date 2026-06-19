@@ -53,17 +53,29 @@ Symptoms:
 Checks:
 
 - Inspect the newest non-empty Desktop log under `%LOCALAPPDATA%\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\Codex\Logs\<year>\<month>\<day>`.
-- Run `codex mcp list` and identify recently added or custom MCP servers first, especially local servers that expose many tools.
+- Check whether CLI/app-server smoke tests exercise the same path as Desktop. If `codex debug app-server send-message-v2 "只输出 OK"` or an equivalent `thread/start` smoke succeeds because it sends `dynamicTools:null`, it does not prove the Desktop UI path is healthy.
+- Inspect whether the Desktop log mentions BrowserUseThreadConfig, app dynamic tools, or another Desktop-only setup step immediately before the failing `thread/start`.
+- Extract or inspect the current ASAR and search `webview\assets\app-server-dynamic-tools-*.js`. If it returns `[{type:\`namespace\`, name, description, tools:[...]}]`, the Desktop frontend is sending the old namespace wrapper shape.
+- Search the extracted asset for the flat target marker `namespace:yr,name:e.name,description:e.description,inputSchema:e.inputSchema`. If present, the dynamicTools schema patch is already applied and the root cause is elsewhere.
+- Run `codex mcp list` and identify recently added or custom MCP servers, especially local servers that expose many tools. Do this before changing config, but do not disable MCP servers merely because the error text contains `inputSchema`.
 - Back up `%USERPROFILE%\.codex\config.toml` before changing MCP sections.
-- Disable one suspect MCP server at a time by commenting or removing only its `[mcp_servers.<name>]` block and any `[mcp_servers.<name>.env]` subtable, then validate the TOML with Python `tomllib`.
-- Run `codex exec --skip-git-repo-check --ephemeral --json "只输出 OK"` as a low-cost thread-start smoke test after each isolation step.
-- If CLI thread start succeeds but Desktop still fails, Desktop is probably still using stale app-server or MCP child processes. Stop only the stale MCP server process when possible, or fully quit and relaunch Codex Desktop.
+- If evidence points to MCP, disable one suspect MCP server at a time by commenting or removing only its `[mcp_servers.<name>]` block and any `[mcp_servers.<name>.env]` subtable, then validate the TOML with Python `tomllib`.
+- Run `codex exec --skip-git-repo-check --ephemeral --json "只输出 OK"` as a low-cost thread-start smoke test after each MCP isolation step.
+- If CLI thread start succeeds but Desktop still fails, either Desktop is using stale app-server/MCP child processes or Desktop-only dynamicTools are malformed. Fully quit and relaunch Codex Desktop before escalating, then inspect the dynamic-tools ASAR asset.
 
 Action:
 
-- Treat this as an MCP schema compatibility issue, not as a Fast Mode, Phone Remote Control, Computer Use, or ASAR integrity issue.
-- Do not run the full MSIX repack for this symptom unless separate logs prove a Desktop bundle gate is closed.
-- Keep the disabled MCP block commented in `config.toml` with a short dated note so it can be restored after the MCP server or adapter is repaired.
+- Treat `missing field inputSchema` as a decision point, not a single root cause. The two known branches are MCP schema incompatibility and Desktop frontend dynamicTools schema drift.
+- For the MCP branch, keep the disabled MCP block commented in `config.toml` with a short dated note so it can be restored after the MCP server or adapter is repaired.
+- For the Desktop dynamicTools branch, run the targeted script instead of the full default repatch:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-dynamic-tools-windows-msix.ps1" -DryRun -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-dynamic-tools-windows-msix.ps1" -Install -Launch -InstallPrerequisites -OutputRoot "<large-local-build-root>"
+```
+
+- After the dynamicTools branch, verify actual Desktop new-chat/thread creation or newest Desktop logs. CLI-only success is insufficient because CLI smoke tests can bypass Desktop `dynamicTools`.
+- Do not run Phone Remote Control or Computer Use repair for this symptom unless separate logs prove those workflows are also broken.
 - If a remote OAuth MCP such as Cloudflare also reports an `invalid_grant` during smoke tests, fix that separately; it is not the same failure as `missing field inputSchema` unless thread start still fails.
 
 ## Browser Use Or Chrome Still Shows Unavailable

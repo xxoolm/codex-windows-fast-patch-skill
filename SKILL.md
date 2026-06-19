@@ -1,11 +1,11 @@
 ---
 name: codex-windows-fast-patch
-description: Reapply and repair Windows Codex Desktop after Store upgrades, including Fast Mode request/UI gates, locale i18n, plugin UI gates, Chrome/browser_use gates, Goal command gates, Windows Computer Use availability gates and plugin/runtime repair, phone remote-control pairing under third-party/API-key main app usage, ASAR integrity repair, signing/installing patched MSIX packages, SDK cleanup, Fast Mode wire verification, local plugin marketplace registration, and optional custom model_instructions_file setup.
+description: Reapply and repair Windows Codex Desktop after Store upgrades, including Fast Mode request/UI gates, locale i18n, plugin UI gates, Chrome/browser_use gates, Goal command gates, Windows Computer Use availability gates and plugin/runtime repair, phone remote-control pairing under third-party/API-key main app usage, Desktop dynamicTools/inputSchema thread-start schema drift, ASAR integrity repair, signing/installing patched MSIX packages, SDK cleanup, Fast Mode wire verification, local plugin marketplace registration, and optional custom model_instructions_file setup.
 ---
 
 # Codex Windows Fast Patch
 
-Use this skill when the user says Codex Desktop was upgraded and the Fast Mode / Plugins / Goal patch disappeared, asks to repatch Codex on Windows, asks to verify whether Fast Mode is really being sent, asks to restore/register the local plugin marketplace, asks to enable Chrome browser use or Windows Computer Use in Codex Desktop, or asks to enable/repair phone remote control while keeping third-party/API-key model access. Also use it when the language/locale setting reverts after restart, browser or plugin entries are hidden by availability gates, the Computer Control settings page shows "Any App" / "任意应用" as disabled by organization or unavailable in the current region, a Computer Use task reports native pipe, bundled plugin cache, helper path, package import, or runtime initialization errors, phone remote-control QR pairing spins/fails, post-pairing phone-created turns hit the wrong model API endpoint, or the user explicitly asks to configure the bundled custom `model_instructions_file` prompt asset.
+Use this skill when the user says Codex Desktop was upgraded and the Fast Mode / Plugins / Goal patch disappeared, asks to repatch Codex on Windows, asks to verify whether Fast Mode is really being sent, asks to restore/register the local plugin marketplace, asks to enable Chrome browser use or Windows Computer Use in Codex Desktop, or asks to enable/repair phone remote control while keeping third-party/API-key model access. Also use it when the language/locale setting reverts after restart, browser or plugin entries are hidden by availability gates, the Computer Control settings page shows "Any App" / "任意应用" as disabled by organization or unavailable in the current region, a Computer Use task reports native pipe, bundled plugin cache, helper path, package import, or runtime initialization errors, phone remote-control QR pairing spins/fails, post-pairing phone-created turns hit the wrong model API endpoint, Desktop new-chat/thread start fails with `missing field inputSchema`, or the user explicitly asks to configure the bundled custom `model_instructions_file` prompt asset.
 
 ## Platform Compatibility
 
@@ -52,7 +52,7 @@ Before choosing the full MSIX repack path, identify whether the current failure 
 - Use the full repatch workflow for Fast Mode, locale, plugin UI gates, browser_use Desktop gates, Goal gates, ASAR integrity, and settings/UI availability gates.
 - Use the Computer Use Only workflow first when evidence points to a local plugin/runtime problem: `codex plugin list` marketplace errors, missing `.agents\plugins\marketplace.json`, missing or partial `openai-bundled` plugin files, `bundled_plugins_marketplace_resolve_failed`, `EBUSY` on bundled plugin files, native pipe unavailable, `missing-helper-path`, stale Chrome native messaging host paths, bundled plugin cache drift, Chrome/browser cache link drift, stale `SKY_CUA_NATIVE_PIPE` config, `@oai/sky` import errors, or `setupComputerUseRuntime` import failure. This class does not require an MSIX uninstall/reinstall unless a later check also proves a Desktop gate is still closed.
 - Use the Phone Remote Control workflow when the user needs mobile pairing/control, the Connections page hides the phone setup card, the QR dialog spins, remote-control setup jumps to ChatGPT auth, the Allow dialog fails, the phone says the Codex environment version expired, or phone-created turns reach Desktop but send model requests to the wrong API endpoint.
-- Use the MCP schema isolation workflow when Codex Desktop cannot create a new conversation or local task and the newest Desktop log reports `method=thread/start` with the phrase `missing field inputSchema`. This usually means one configured MCP server is exposing or being adapted to an incompatible tool schema. Back up `config.toml`, inspect `codex mcp list`, disable suspect MCP servers one at a time, validate TOML, confirm `codex exec --ephemeral --json` can start a thread, then restart Desktop or clear stale MCP child processes. Do not run the MSIX repack, Phone Remote Control patch, or Computer Use repair for this symptom unless separate evidence points there.
+- Use the Missing inputSchema decision workflow when Codex Desktop cannot create a new conversation or local task and the newest Desktop log reports `method=thread/start` with the phrase `missing field inputSchema`. Do not assume this is always MCP. First compare CLI/app-server smoke tests against Desktop logs and inspect whether Desktop is sending non-null app dynamic tools. If the failure follows a suspect MCP server, isolate MCP. If CLI thread start succeeds while Desktop UI fails and extracted ASAR has `webview\assets\app-server-dynamic-tools-*.js` returning a namespace-wrapped `dynamicTools` object, use the Dynamic Tools Schema workflow. Do not run Phone Remote Control or Computer Use repair for this symptom unless separate evidence points there.
 - If the user asks for Phone Remote Control and ordinary Desktop features in the same repair, patch Phone Remote Control first, then verify Fast Mode/browser/Chrome/Computer Use. If the remote-control MSIX install disturbs Computer Use or Chrome native-host state, immediately run the Computer Use Only workflow and re-run `-StrictVerifyOnly`.
 - Do not infer that a new `resources\codex.exe` PE file means `app.asar` is gone or that Computer Use needs binary patching. Inspect the current package resources first. If `app.asar` still exists and the symptom is a plugin/runtime import or cache failure, run `scripts\install-computer-use-local.ps1` before considering MSIX or binary changes.
 - After a Computer Use-only repair, always run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly`. Treat `client import ok` plus `helper transport ok` as the local repair success signal.
@@ -161,11 +161,39 @@ After installing Phone Remote Control, verify that ordinary features survived th
 
 If phone-created turns reach Desktop but fail against the wrong model API endpoint, inspect the concrete request URL, `config.toml`, and the affected thread/session metadata before changing anything. Treat this as a post-pairing configuration diagnosis, not as part of remote-control pairing. Preserve conversation history and do not change `model_provider` ids just to change a URL.
 
+## Dynamic Tools Schema
+
+Use this targeted MSIX/ASAR path only for the Desktop dynamicTools variant of `missing field inputSchema`. Required evidence:
+
+- Newest Desktop log shows `method=thread/start` with `missing field inputSchema`.
+- CLI/app-server smoke tests can start a thread when they do not send Desktop app dynamic tools, for example `codex debug app-server send-message-v2 "只输出 OK"` or an equivalent `thread/start` path with `dynamicTools:null`.
+- The Desktop log or extracted bundle shows the failure happens after Desktop app dynamic tools are assembled, not after MCP server startup.
+- Extracted `webview\assets\app-server-dynamic-tools-*.js` returns the old namespace wrapper shape: `[{type:\`namespace\`, name, description, tools:[...]}]`.
+
+When those conditions hold, patch the Desktop asset to return flat `DynamicToolSpec[]` entries with `namespace`, `name`, `description`, `inputSchema`, and optional `deferLoading`. Do not disable MCP servers for this variant unless a separate MCP-specific failure remains.
+
+Run a dry run first. Use `-OutputRoot` on a large local drive when the system drive is low:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-dynamic-tools-windows-msix.ps1" -DryRun -OutputRoot "<large-local-build-root>"
+```
+
+If the dry run passes, install and relaunch:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-dynamic-tools-windows-msix.ps1" -Install -Launch -InstallPrerequisites -OutputRoot "<large-local-build-root>"
+```
+
+After installation, verify with the actual Desktop UI or newest Desktop logs. A CLI-only smoke test is not sufficient because it can bypass Desktop `dynamicTools`. Confirm the latest `thread/start` entries do not report `missing field inputSchema`, then run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` and `codex plugin list` if Computer Use, Chrome, or browser use are in scope.
+
+Cleanup policy: successful dynamic-tools script runs delete generated MSIX staging directories, ASAR extracts, script-local `npx` cache, temporary SDK cache under `-OutputRoot`, and installed patched `.msix` artifacts. Use `-KeepWorkDir` only for failed or actively debugged runs.
+
 ## Important Guardrails
 
 - The full MSIX install path removes the existing `OpenAI.Codex` package and installs a patched package. If run from inside Codex Desktop, the app can disappear or exit while the script continues. Use that path only when package-gated Desktop code must be patched; for local Chrome/Computer Use marketplace/cache/native-host/runtime failures, use the Computer Use Only workflow instead.
 - Do not modify `C:\Program Files\WindowsApps` in place. Use the MSIX repack script.
 - Do not run the phone remote-control MSIX patch as a default repatch side effect. Use it only for phone remote-control tasks or when the user explicitly asks for that workflow.
+- Do not treat every `missing field inputSchema` as an MCP problem. If CLI smoke tests pass while Desktop UI fails and the dynamic-tools ASAR asset still returns a namespace wrapper, use the Dynamic Tools Schema workflow instead of disabling unrelated MCP servers.
 - Do not trust a response like `FAST_CHECK_OK` as proof of Fast Mode. Trust only the wrapper/script wire verification, which captures Codex's `/v1/responses` WebSocket request and checks `service_tier=priority`.
 - If the app launches then immediately exits, run Electron logging and check for ASAR integrity failures:
 
@@ -226,6 +254,13 @@ Phone remote-control script options:
 - `-OutputRoot <path>`: optional large local build root; use it when the default temp/output drive is short on space.
 - `-ReplacementResourceCodexExe <path>`: copy in a patched native app-server binary and verify remote-control markers before packaging.
 - `-Install -Launch -InstallPrerequisites`: sign, install, and relaunch the patched package after dry-run passes.
+
+Dynamic tools schema script options:
+
+- `scripts\patch-dynamic-tools-windows-msix.ps1 -DryRun`: extract current package, patch/verify `app-server-dynamic-tools-*.js`, run `node --check`, then clean successful generated artifacts without installing.
+- `-OutputRoot <path>`: optional large local build root; use it when the system drive is short on space.
+- `-Install -Launch -InstallPrerequisites`: sign, install, and relaunch the targeted dynamicTools patched package after dry-run passes.
+- `-KeepWorkDir`: keep MSIX staging, ASAR extract, and script-local `npx` cache for debugging only.
 
 ## Optional Model Instructions File
 
@@ -322,4 +357,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 - For phone remote-control repair, the patched ASAR contains `remote_control_desktop_fetch_override_used`, `remote_control_mobile_setup_no_auth_redirect`, `remote_control_mobile_setup_authorize_before_enable`, `remote_control_settings_force_control_this_pc_visible`, `remote_control_settings_force_remote_control_section_visible`, and `remote_control_qm_start`.
 - For phone remote-control repair with a native replacement, live `app\resources\codex.exe` contains `remote_control_app_server_isolated_oauth_used`, `remote_control_native_remote_json_first`, `remote_control_websocket_proxy_attempt`, `remote_control_websocket_proxy_connected`, `remote-control-oauth.json`, `remote.json`, and `codex.remote_control.enroll`.
 - For phone remote-control repair, `Settings -> Connections` shows the mobile/phone setup path, the QR code appears, phone scan no longer reports an expired Codex environment, native logs show remote-control WebSocket ping/pong/ack instead of repeated Windows `os error 10060`, and phone-sent turns reach Desktop. If a phone-sent turn then targets the wrong model API endpoint, handle it as the post-pairing configuration case.
+- For Dynamic Tools Schema repair, the patched ASAR has `webview\assets\app-server-dynamic-tools-*.js` returning flat entries containing `namespace`, `name`, `description`, and `inputSchema` instead of a namespace wrapper object, `node --check` passes for that asset, and actual Desktop new-chat/thread creation no longer logs `missing field inputSchema`.
 - `makeappx.exe` and `signtool.exe` are missing again if SDK cleanup was enabled.
