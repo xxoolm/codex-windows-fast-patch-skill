@@ -135,6 +135,22 @@ Action:
 - Patch `desktop_fetch` so only `/backend-api/wham/remote/control/*`, `/wham/remote/control/*`, `/backend-api/accounts/mfa_info`, and `/accounts/mfa_info` receive the isolated remote bearer.
 - Patch the setup dialog 401 catch so it stays inside remote-control UI instead of calling the global ChatGPT login redirect.
 
+### Control This Computer Shows Device List Login Error
+
+Symptoms:
+
+- `Settings -> Connections -> Control this computer` is visible and the local toggles may appear enabled.
+- The page shows `Couldn’t load device list` / `无法加载设备列表` with `Sign in to ChatGPT again, then retry`.
+- `$env:USERPROFILE\.codex\sqlite\state_5.sqlite` has table `remote_control_enrollments`, but the count is `0`.
+- `$env:USERPROFILE\.codex\remote-control-flow.log` shows only `check remote control authorization`, or shows `/backend-api/wham/remote/control/clients` using `remote-control-oauth.json` with only `codex.remote_control.enroll` scope.
+
+Action:
+
+- Do not treat visible `Control this computer` tabs as proof of working remote control. Verify `remote_control_enrollments` has a row after authorization.
+- In 26.616-style bundles, patch the new desktop fetch auth path around `async function KF({appServerClient:e,...})`, not only the older `PN/eP/pP` fetch anchors.
+- For `/wham/remote/control/clients` and environment-list read endpoints, prefer isolated `remote.json` before `remote-control-oauth.json`; the step-up/enroll token may have only `codex.remote_control.enroll` and can trigger the device-list login error.
+- Keep `remote-control-oauth.json` for MFA/step-up/enroll flows and keep `remote.json` for normal connection/read authorization. Never fall back to global `auth.json`.
+
 ### Allow Dialog Fails After MFA
 
 Symptoms:
