@@ -67,6 +67,14 @@ In 26.611.8604, the main bundle shape changed again. Detect the main bundle by b
 - App-server auth function `Sg`, wrapper `zg`, and request function `Rg`.
 - Authorize flow `n_`, device-key creation `F_`, and device-key client factory `EQ`.
 
+In 26.616.3767, the main bundle may no longer expose the older `desktop_fetch_auth_401`, `ZZ`, or `pP(...)` anchors. Known verified anchors are:
+
+- Main file shape: `.vite\build\main-*.js` with `CODEX_API_BASE_URL`, `async function v_({action:e,appServerClient:t`, `async function P_({action:e,appServerClient:t,desktopApiOptions:n`, and `async function c$`.
+- Client id var `QQ` and enroll scope vars `K_` / `i$`.
+- App-server auth function `v_`, auth header helper `y_`, HTTP request function `P_`, step-up functions `c$` / `m$`, authorize flow `Q_`, enrollment request `rv`, auth headers `nv`, device-key creation `jv`, and device-key client factory `L$`.
+- Mobile setup flow local-enable function `async function F(e,t,n)` must authorize before `set-local-remote-control-enabled`.
+- Remote connection settings visibility gates can be `nt=Ne&&!0,` for the local tab and `Ne=Xe(),X=!T,` for the whole remote-control section. Patch both; otherwise `Control this computer` can appear but clicking it keeps the SSH page.
+
 The patched mobile setup chunks must not still contain forced redirect shapes:
 
 ```text
