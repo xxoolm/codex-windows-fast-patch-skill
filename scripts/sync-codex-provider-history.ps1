@@ -17,7 +17,7 @@ function Write-Log([string]$Message) {
 }
 
 if (-not $BackupRoot) {
-  $BackupRoot = Join-Path $CodexHome 'backups_state\provider-sync-agent'
+  $BackupRoot = Join-Path $CodexHome 'backups_state\history-sync-agent'
 }
 
 $python = Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -257,7 +257,7 @@ def rewrite_rollout(change):
     text = path.read_text(encoding="utf-8", errors="replace")
     pos = text.find("\n")
     rest = "" if pos == -1 else text[pos + 1:]
-    tmp = path.with_name(path.name + f".provider-sync-agent.{os.getpid()}.{int(time.time()*1000)}.tmp")
+    tmp = path.with_name(path.name + f".history-sync-agent.{os.getpid()}.{int(time.time()*1000)}.tmp")
     tmp.write_text(change["next"] + change["sep"] + rest, encoding="utf-8", newline="")
     os.replace(tmp, path)
     os.utime(path, (original_mtime, original_mtime))
