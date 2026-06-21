@@ -85,6 +85,12 @@ const mobileSetupNoAuthRedirectFiles = findJsAll("codex mobile setup no-auth red
     text.includes("set-local-remote-control-enabled"))
 );
 
+const mobileSetupMfaInfoFile = findJs("codex mobile setup MFA info bundle", (file, text) =>
+  path.basename(file).startsWith("codex-mobile-setup-queries-") &&
+  text.includes("/accounts/mfa_info") &&
+  text.includes("/wham/remote/control/clients")
+);
+
 const mobileSetupFlowFile = findJs("codex mobile setup flow bundle", (file, text) =>
   path.basename(file).startsWith("codex-mobile-setup-flow-") &&
   text.includes("set-local-remote-control-enabled") &&
@@ -405,6 +411,66 @@ function patchMobileSetup(text) {
   return { text: next, status: "patched" };
 }
 
+function patchMobileSetupMfaInfo403(text) {
+  const marker = "remote_control_mfa_info_403_nonblocking";
+  if (text.includes(marker)) {
+    return { text, status: "already-patched" };
+  }
+  const oldMfaInfo =
+    "async function k(){return S.parse(await _.safeGet(`/accounts/mfa_info`)).mfa_enabled_v2}";
+  const newMfaInfo =
+    "async function k(){try{return S.parse(await _.safeGet(`/accounts/mfa_info`)).mfa_enabled_v2}catch(e){if(e instanceof d&&e.status===403)return void\"remote_control_mfa_info_403_nonblocking\",!0;throw e}}";
+  let next;
+  if (text.includes(oldMfaInfo)) {
+    next = replaceExact(text, oldMfaInfo, newMfaInfo, "mobile setup MFA info 403 fallback");
+  } else {
+    const mfaInfoPattern =
+      /async function ([A-Za-z_$][\w$]*)\(\)\{return ([A-Za-z_$][\w$]*)\.parse\(await ([A-Za-z_$][\w$]*)\.safeGet\(`\/accounts\/mfa_info`\)\)\.mfa_enabled_v2\}/;
+    if (!mfaInfoPattern.test(text)) {
+      throw new Error("mobile setup MFA info query anchor not found");
+    }
+    next = text.replace(
+      mfaInfoPattern,
+      (_match, fnName, schemaName, requestName) =>
+        `async function ${fnName}(){try{return ${schemaName}.parse(await ${requestName}.safeGet(\`/accounts/mfa_info\`)).mfa_enabled_v2}catch(e){if(e instanceof d&&e.status===403)return void"remote_control_mfa_info_403_nonblocking",!0;throw e}}`
+    );
+  }
+  if (!next.includes(marker) || !next.includes("/accounts/mfa_info")) {
+    throw new Error("mobile setup MFA info 403 fallback marker missing after patch");
+  }
+  return { text: next, status: "patched" };
+}
+
+function patchMobileSetupClientListPartialFailure(text) {
+  const marker = "remote_control_client_list_partial_failure_nonblocking";
+  if (text.includes(marker)) {
+    return { text, status: "already-patched" };
+  }
+  const oldClientList =
+    "async function I(e,{appServerHostId:t,includeBrowserClients:n=!0}={}){let[r,i]=await Promise.all([n&&t==null?j():[],e==null?[]:R(t??`local`,e)]),a=new Map;for(let e of r)a.set(e.client_id,z(e));for(let e of i)a.set(e.clientId,e);return Array.from(a.values())}";
+  const newClientList =
+    "async function I(e,{appServerHostId:t,includeBrowserClients:n=!0}={}){let[r,i]=await Promise.all([n&&t==null?j().catch(e=>{throw e}):[],e==null?[]:R(t??`local`,e).catch(e=>(void\"remote_control_client_list_partial_failure_nonblocking\",[]))]),a=new Map;for(let e of r)a.set(e.client_id,z(e));for(let e of i)a.set(e.clientId,e);return Array.from(a.values())}";
+  let next;
+  if (text.includes(oldClientList)) {
+    next = replaceExact(text, oldClientList, newClientList, "mobile setup client list partial failure fallback");
+  } else {
+    const clientListPattern =
+      /async function ([A-Za-z_$][\w$]*)\(e,\{appServerHostId:t,includeBrowserClients:n=!0\}=\{\}\)\{let\[r,i\]=await Promise\.all\(\[n&&t==null\?([A-Za-z_$][\w$]*)\(\):\[\],e==null\?\[\]:([A-Za-z_$][\w$]*)\(t\?\?`local`,e\)\]\),a=new Map;for\(let e of r\)a\.set\(e\.client_id,([A-Za-z_$][\w$]*)\(e\)\);for\(let e of i\)a\.set\(e\.clientId,e\);return Array\.from\(a\.values\(\)\)\}/;
+    if (!clientListPattern.test(text)) {
+      throw new Error("mobile setup client list merge anchor not found");
+    }
+    next = text.replace(
+      clientListPattern,
+      (_match, fnName, browserListFn, appServerListFn, browserMapFn) =>
+        `async function ${fnName}(e,{appServerHostId:t,includeBrowserClients:n=!0}={}){let[r,i]=await Promise.all([n&&t==null?${browserListFn}().catch(e=>{throw e}):[],e==null?[]:${appServerListFn}(t??\`local\`,e).catch(e=>(void"remote_control_client_list_partial_failure_nonblocking",[]))]),a=new Map;for(let e of r)a.set(e.client_id,${browserMapFn}(e));for(let e of i)a.set(e.clientId,e);return Array.from(a.values())}`
+    );
+  }
+  if (!next.includes(marker) || !next.includes("/wham/remote/control/clients")) {
+    throw new Error("mobile setup client list partial-failure marker missing after patch");
+  }
+  return { text: next, status: "patched" };
+}
+
 function patchMobileSetupFlow(text) {
   const marker = "remote_control_mobile_setup_authorize_before_enable";
   if (text.includes(marker)) {
@@ -523,6 +589,13 @@ for (const mobileSetupNoAuthRedirectFile of mobileSetupNoAuthRedirectFiles) {
   mobileResults.push({ file: mobileSetupNoAuthRedirectFile, status: mobileResult.status });
 }
 
+let mobileSetupMfaInfoText = read(mobileSetupMfaInfoFile);
+const mobileSetupMfaInfoResult = patchMobileSetupMfaInfo403(mobileSetupMfaInfoText);
+mobileSetupMfaInfoText = mobileSetupMfaInfoResult.text;
+const mobileSetupClientListResult = patchMobileSetupClientListPartialFailure(mobileSetupMfaInfoText);
+mobileSetupMfaInfoText = mobileSetupClientListResult.text;
+write(mobileSetupMfaInfoFile, mobileSetupMfaInfoText);
+
 let mobileFlowText = read(mobileSetupFlowFile);
 const mobileFlowResult = patchMobileSetupFlow(mobileFlowText);
 mobileFlowText = mobileFlowResult.text;
@@ -539,6 +612,9 @@ process.stdout.write(
       mainFile,
       mainStatus: mainStatuses,
       mobileSetupNoAuthRedirectFiles: mobileResults,
+      mobileSetupMfaInfoFile,
+      mobileSetupMfaInfoStatus: mobileSetupMfaInfoResult.status,
+      mobileSetupClientListStatus: mobileSetupClientListResult.status,
       mobileSetupFlowFile,
       mobileSetupFlowStatus: mobileFlowResult.status,
       remoteConnectionsSettingsFile,

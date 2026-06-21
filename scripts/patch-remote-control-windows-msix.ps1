@@ -409,6 +409,7 @@ try {
     }
   }
   $mobileFlowFile = [string]$patchInfo.mobileSetupFlowFile
+  $mobileSetupMfaInfoFile = [string]$patchInfo.mobileSetupMfaInfoFile
   $remoteConnectionsSettingsFile = [string]$patchInfo.remoteConnectionsSettingsFile
   if (-not (Test-Path -LiteralPath $mainFile -PathType Leaf)) {
     Fail "patched main file missing: $mainFile"
@@ -424,6 +425,9 @@ try {
   if (-not (Test-Path -LiteralPath $mobileFlowFile -PathType Leaf)) {
     Fail "patched mobile setup flow file missing: $mobileFlowFile"
   }
+  if (-not (Test-Path -LiteralPath $mobileSetupMfaInfoFile -PathType Leaf)) {
+    Fail "patched mobile setup MFA info file missing: $mobileSetupMfaInfoFile"
+  }
   if (-not (Test-Path -LiteralPath $remoteConnectionsSettingsFile -PathType Leaf)) {
     Fail "patched remote connections settings file missing: $remoteConnectionsSettingsFile"
   }
@@ -436,6 +440,7 @@ try {
     }
   }
   $mobileFlowText = Get-Content -LiteralPath $mobileFlowFile -Raw
+  $mobileSetupMfaInfoText = Get-Content -LiteralPath $mobileSetupMfaInfoFile -Raw
   $remoteConnectionsSettingsText = Get-Content -LiteralPath $remoteConnectionsSettingsFile -Raw
   if (-not $mainText.Contains('remote_control_desktop_fetch_override_used')) {
     Fail 'patched main marker missing'
@@ -453,6 +458,12 @@ try {
   }
   if (-not $mobileFlowText.Contains('remote_control_mobile_setup_authorize_before_enable')) {
     Fail 'patched mobile setup flow marker missing'
+  }
+  if (-not $mobileSetupMfaInfoText.Contains('remote_control_mfa_info_403_nonblocking')) {
+    Fail 'patched mobile setup MFA info 403 fallback marker missing'
+  }
+  if (-not $mobileSetupMfaInfoText.Contains('remote_control_client_list_partial_failure_nonblocking')) {
+    Fail 'patched mobile setup client list partial-failure fallback marker missing'
   }
   if (-not $remoteConnectionsSettingsText.Contains('remote_control_settings_force_control_this_pc_visible')) {
     Fail 'patched remote connections settings visibility marker missing'
@@ -473,6 +484,10 @@ try {
   & node --check $mobileFlowFile
   if ($LASTEXITCODE -ne 0) {
     Fail "node --check failed for $mobileFlowFile"
+  }
+  & node --check $mobileSetupMfaInfoFile
+  if ($LASTEXITCODE -ne 0) {
+    Fail "node --check failed for $mobileSetupMfaInfoFile"
   }
   & node --check $remoteConnectionsSettingsFile
   if ($LASTEXITCODE -ne 0) {
@@ -523,7 +538,7 @@ try {
 
   if ($DryRun) {
     Write-Log "dry run complete; patched package root validated at: $workPackageRoot"
-    Write-Log "dry run markers: remote_control_desktop_fetch_override_used, remote_control_appserver_bh_isolated_auth_fallback, remote_control_mobile_setup_no_auth_redirect, remote_control_mobile_setup_authorize_before_enable, remote_control_settings_force_control_this_pc_visible, remote_control_settings_force_remote_control_section_visible"
+    Write-Log "dry run markers: remote_control_desktop_fetch_override_used, remote_control_appserver_bh_isolated_auth_fallback, remote_control_mobile_setup_no_auth_redirect, remote_control_mobile_setup_authorize_before_enable, remote_control_mfa_info_403_nonblocking, remote_control_client_list_partial_failure_nonblocking, remote_control_settings_force_control_this_pc_visible, remote_control_settings_force_remote_control_section_visible"
     $scriptSucceeded = $true
     return
   }

@@ -52,6 +52,8 @@ The ASAR patch script targets behavior, not fixed filenames. Dry-run and live pa
 - `remote_control_appserver_bh_isolated_auth_fallback`
 - `remote_control_connection_auth_fallback_used`
 - `remote_control_mobile_setup_no_auth_redirect`
+- `remote_control_mfa_info_403_nonblocking`
+- `remote_control_client_list_partial_failure_nonblocking`
 - `remote_control_mobile_setup_authorize_before_enable`
 - `remote_control_settings_force_control_this_pc_visible`
 - `remote_control_settings_force_remote_control_section_visible`
@@ -150,6 +152,8 @@ Action:
 - In 26.616-style bundles, patch the new desktop fetch auth path around `async function KF({appServerClient:e,...})`, not only the older `PN/eP/pP` fetch anchors.
 - For `/wham/remote/control/clients` and environment-list read endpoints, prefer isolated `remote.json` before `remote-control-oauth.json`; the step-up/enroll token may have only `codex.remote_control.enroll` and can trigger the device-list login error.
 - Keep `remote-control-oauth.json` for MFA/step-up/enroll flows and keep `remote.json` for normal connection/read authorization. Never fall back to global `auth.json`.
+- In 26.616-style settings, the device list query can still fail even when `/backend-api/wham/remote/control/clients` returns HTTP 200. Check `/backend-api/wham/remote/control/mfa_requirement` and `/backend-api/accounts/mfa_info`: `mfa_requirement` may return `{"requirement":"required"}` while `accounts/mfa_info` returns 403 HTML. Patch the mobile setup query so that a 403 from `/accounts/mfa_info` is non-fatal for this remote-control UI path and verify `remote_control_mfa_info_403_nonblocking`.
+- The same device list view merges browser clients from `/wham/remote/control/clients` with local app-server clients from `list-remote-control-clients-for-host`. A failing app-server subquery must not discard the successful browser client list. Patch the mobile setup query merge to tolerate app-server list failures and verify `remote_control_client_list_partial_failure_nonblocking`.
 - A fully patched ASAR/native binary can still fail here when `.codex\remote-control-oauth.json` is valid for enroll but `.codex\remote.json` is disabled, expired, or has a reused refresh token. The normal read token needs `api.connectors.read` and `api.connectors.invoke`; the enroll-only token is not enough for `/backend-api/wham/remote/control/clients`.
 - Verify the normal bearer without modifying files:
 
