@@ -134,6 +134,7 @@ function Copy-DirectoryDataOnly {
     $target = Join-Path $Destination $relative
     $targetParent = Split-Path -Parent $target
     Resolve-OrCreateDirectory $targetParent | Out-Null
+    [System.IO.Directory]::CreateDirectory($targetParent) | Out-Null
     [System.IO.File]::WriteAllBytes($target, [System.IO.File]::ReadAllBytes($file.FullName))
     [System.IO.File]::SetLastWriteTime($target, $file.LastWriteTime)
   }
