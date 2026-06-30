@@ -38,11 +38,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun -ReplacementResourceCodexExe "<path-to-built-codex.exe>"
 ```
 
-6. After dry-run succeeds, rerun with `-Install -Launch -InstallPrerequisites`. Stop only WindowsApps Codex Desktop processes; do not kill Antigravity/extension-host Codex sessions unless the user explicitly asks.
+6. If the Allow dialog fails and native logs show `remote control requires ChatGPT authentication; API key auth is not supported`, build a patched native app-server binary first. Use a work root on a large local drive if the user does not want system-drive space consumed:
 
-7. After successful remote-control install, verify that the ordinary patched features survived. At minimum run `install-computer-use-local.ps1 -StrictVerifyOnly`, `codex plugin list`, and a Windows sandbox smoke test. If strict verification reports a stale Chrome native-host manifest or a missing/stale bundled cache link, run `install-computer-use-local.ps1 -VerifyOnly`, then rerun `-StrictVerifyOnly`.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\build-remote-control-native-replacement.ps1" -WorkRoot "<large-local-build-root>\native-remote"
+```
 
-8. After successful repair, delete or let the script delete generated MSIX staging, ASAR extraction, temporary patched `.msix`, script-local `npx` cache, live verification extracts, copied SQLite/log probes, and temporary Windows SDK BuildTools. Keep reusable native build outputs and source checkouts if they avoid a costly rebuild next time. Keep auth/config/sqlite state and explicit backups unless the user asks for backup pruning.
+Use the printed `ReplacementResourceCodexExe` value with `patch-remote-control-windows-msix.ps1 -ReplacementResourceCodexExe`. The helper keeps the clone, Cargo cache, Rustup cache, temp, and target output under `-WorkRoot`, applies `references\remote-control-native-replacement.patch`, builds `codex-cli` with Rust `1.95.0-x86_64-pc-windows-msvc`, target `x86_64-pc-windows-msvc`, and profile `dev-small`, then verifies native markers. The GNU toolchain is not suitable for this Windows MSIX replacement path.
+
+7. After dry-run succeeds, rerun with `-Install -Launch -InstallPrerequisites`. Stop only WindowsApps Codex Desktop processes; do not kill Antigravity/extension-host Codex sessions unless the user explicitly asks.
+
+8. If the install is interrupted after signing/uninstall and `Get-AppxPackage -Name OpenAI.Codex` is empty, install the already generated patched MSIX from the selected output root instead of rebuilding:
+
+```powershell
+Add-AppxPackage -Path "<large-local-build-root>\OpenAI.Codex_<version>_remote-control-patched.msix" -ForceApplicationShutdown -Verbose
+```
+
+9. After successful remote-control install, verify that the ordinary patched features survived. At minimum run `install-computer-use-local.ps1 -StrictVerifyOnly`, `codex plugin list`, and a Windows sandbox smoke test. If strict verification reports a stale Chrome native-host manifest or a missing/stale bundled cache link, run `install-computer-use-local.ps1 -VerifyOnly`, then rerun `-StrictVerifyOnly`.
+
+10. After successful repair, delete or let the script delete generated MSIX staging, ASAR extraction, temporary patched `.msix`, script-local `npx` cache, live verification extracts, copied SQLite/log probes, and temporary Windows SDK BuildTools. If the user only asked for the repair, also remove source checkouts, Cargo/Rustup caches, target directories, temp directories, and generated patch files created only for this repair. Keep the installed repaired package, `.codex\remote.json`, `.codex\remote-control-oauth.json`, config, sqlite state, logs, and explicit backups.
 
 ## ASAR Patch Expectations
 
@@ -105,6 +119,7 @@ For 26.609-style Windows builds, the known native fixes are:
 - Try real Codex home candidates for isolated auth: `auth_manager.codex_home()`, `CODEX_HOME`, `%USERPROFILE%\.codex`, and `%HOME%\.codex`. Log candidate paths so a future failure proves whether the native app-server looked in the actual user home.
 - In `app-server-transport/src/transport/remote_control/websocket.rs`, enable the `tungstenite` proxy feature and connect remote-control WebSockets through `HTTPS_PROXY`/`HTTP_PROXY` when set, with a local optional v2rayN fallback at `http://127.0.0.1:10808`. The fallback must be disableable with `CODEX_REMOTE_CONTROL_DISABLE_V2RAYN_PROXY_FALLBACK=1`.
 - In workspace `Cargo.toml`, make sure `env!("CARGO_PKG_VERSION")` used by server enrollment is not `0.0.0`. For the verified 26.609.41114 build, `0.140.0-alpha.2` avoided the phone-side `Codex version expired` state.
+- For 26.623.9142, a verified native replacement used `references\remote-control-native-replacement.patch` and workspace package version `0.133.0`; it fixed the API-key main-auth rejection by loading isolated `.codex\remote.json` and added process-local proxy fallback markers for WebSocket connection diagnostics.
 
 Do not claim a binary is fixed because it was rebuilt. Check markers in the actual file that will be copied to `app\resources\codex.exe`.
 
@@ -164,6 +179,24 @@ python "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\refresh-
 - If verify-only reports disabled/expired/401/403, or manual refresh failed with `refresh_token_reused`, run the same script without `--verify-only` and finish the browser PKCE flow. The script writes only `$env:USERPROFILE\.codex\remote.json`, backs up the old file under `.codex\backups\remote-control-auth`, and must not write `.codex\auth.json` or `config.toml`.
 - Direct token exchange can fail with `unsupported_country_region_territory`; keep the default `http://127.0.0.1:10808` proxy unless there is evidence another route works. Use `--proxy ""` only when intentionally testing the direct path.
 - After `--verify-only` returns `ok: true`, refresh the Connections page or restart only WindowsApps Codex Desktop/app-server, then scan the QR code again.
+
+### Allow Dialog Fails With API-key Main Auth
+
+Symptoms:
+
+- User clicks Allow after MFA or after opening `Settings -> Connections -> Control this computer`.
+- Desktop reports `Couldn't enable remote control. Try again` or the localized equivalent.
+- Native app-server logs show `remote control requires ChatGPT authentication; API key auth is not supported`.
+- The main Codex Desktop auth is intentionally a third-party/API-key provider, while isolated `.codex\remote.json` verifies successfully against `/backend-api/wham/remote/control/clients`.
+
+Action:
+
+- Do not switch global `model_provider` or global Desktop auth to ChatGPT. That can hide history or break the user's API routing.
+- Do not repeat ASAR-only repacks after this log appears. The native app-server rejects API-key main auth before remote-control connection can use the isolated bearer.
+- Build a native replacement with `scripts\build-remote-control-native-replacement.ps1 -WorkRoot "<large-local-build-root>\native-remote"`.
+- Install it through `scripts\patch-remote-control-windows-msix.ps1 -ReplacementResourceCodexExe "<built-codex.exe>" -Install -Launch -InstallPrerequisites`.
+- Verify the live installed `app\resources\codex.exe` contains `remote_control_app_server_isolated_oauth_used` and `remote_control_native_remote_json_first`, then verify logs from the WindowsApps app-server process show isolated remote auth from `.codex\remote.json`.
+- If the same `API key auth is not supported` string remains in `logs_2.sqlite`, filter by `pid` and process path. Old Antigravity/VS Code extension app-server processes can keep logging the old failure after the WindowsApps package is fixed.
 
 ### Allow Dialog Fails After MFA
 

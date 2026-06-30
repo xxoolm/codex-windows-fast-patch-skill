@@ -40,6 +40,7 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `scripts/patch-dynamic-tools-schema.cjs`: Electron bundle patcher used by the dynamicTools MSIX script.
 - `scripts/patch-remote-control-windows-msix.ps1`: Phone remote-control MSIX / ASAR patch and marker verification reference implementation.
 - `scripts/patch-remote-control-asar.cjs`: Phone remote-control Electron bundle patcher used by the MSIX script.
+- `scripts/build-remote-control-native-replacement.ps1`: Builds the patched native `app\resources\codex.exe` replacement under a caller-selected work root when the native app-server rejects API-key main auth.
 - `scripts/install-computer-use-local.ps1`: Windows Computer Use local compatibility reference implementation.
 - `scripts/sync-codex-provider-history.ps1`: Sync local conversation provider metadata so conversations hidden after a `model_provider` switch reappear in the official list; `-RepairMissingCwdDirs` can also repair restored conversations that cannot continue because the recorded `cwd` directory is missing. It does not modify `config.toml` or workspace/project roots by default.
 - `scripts/install-model-instructions-file.ps1`: Optional installer for the bundled `model_instructions_file` prompt asset.
@@ -48,6 +49,7 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `assets/system-prompt.md`: Bundled prompt asset used only when optional model instructions setup is requested.
 - `references/restriction-debug-cases.md`: On-demand cases for restriction gates, Chrome/browser_use, Computer Use, and Fast Mode.
 - `references/remote-control-debug-cases.md`: On-demand cases for phone remote-control pairing, isolated auth, native app-server networking, version-expired state, and post-pairing API endpoint diagnosis.
+- `references/remote-control-native-replacement.patch`: Reference Rust source patch for the phone remote-control native app-server replacement.
 
 ## Install
 
@@ -107,7 +109,7 @@ Simple rule: if the repair stops, uninstalls, reinstalls, or relaunches Codex De
 
 Example request: `Use the codex-windows-fast-patch skill to inspect and repair Codex Desktop Fast Mode, language/locale, Chrome browser_use, plugin marketplace, and Computer Use availability on this Windows machine.`
 
-Phone remote-control example request: `Use the codex-windows-fast-patch skill to repair Windows Codex Desktop phone remote control while preserving my third-party API provider and current conversation history.`
+Phone remote-control example request: `Use the codex-windows-fast-patch skill to repair Windows Codex Desktop phone remote control while preserving my third-party API provider and current conversation history. If large build artifacts are needed, keep them on D:\ or another non-system drive.`
 
 Expected verification after a full run:
 

@@ -130,7 +130,7 @@ Before repairing phone remote control, read `references/remote-control-debug-cas
 - Remote-control pairing/control transport can legitimately call `https://chatgpt.com/backend-api/wham/remote/control/...`. Do not rewrite that transport to a third-party model API endpoint.
 - After phone pairing works, verify the actual model sampling request URL. If it goes to the wrong model API endpoint, treat that as a post-pairing configuration diagnosis, not as part of the remote-control pairing implementation.
 - Remote-control OAuth is isolated: use `.codex\remote-control-oauth.json` and `.codex\remote.json`; never use `.codex\auth.json` for the remote-control bearer injection path.
-- An alternate build root is only an optional `-OutputRoot` choice for machines with low system-drive space. Do not hard-code a drive letter into the workflow.
+- An alternate build root is mandatory when the user says not to consume the system drive. Pass `-WorkRoot` / `-OutputRoot` on the requested large local drive and keep Cargo, Rustup, temp, target, MSIX, and source checkout under that root. Do not hard-code a drive letter into the workflow.
 
 If `Settings -> Connections -> Control this computer` is visible but the device list says to sign in to ChatGPT again, verify the normal remote-control bearer before repatching MSIX again:
 
@@ -139,6 +139,14 @@ python "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\refresh-
 ```
 
 If that reports `remote_json_disabled`, `access_token_expired`, `endpoint_http_error`, HTTP 401/403, or a token-refresh diagnosis such as `refresh_token_reused`, regenerate only `.codex\remote.json` with the same script. It uses the official Codex OAuth client, requests `openid profile email offline_access api.connectors.read api.connectors.invoke`, backs up the old `remote.json` under `.codex\backups\remote-control-auth`, defaults to proxy `http://127.0.0.1:10808`, and must not write `.codex\auth.json` or `config.toml`.
+
+If the Allow dialog fails and the newest native app-server logs show `remote control requires ChatGPT authentication; API key auth is not supported`, ASAR patches and `.codex\remote.json` refresh are not enough. Build a patched native `app\resources\codex.exe` from the Codex Rust source with the reference native patch, using a large non-system work root when requested:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\build-remote-control-native-replacement.ps1" -WorkRoot "<large-local-build-root>\native-remote"
+```
+
+The build helper keeps the clone, Cargo cache, Rustup cache, temp directory, and target directory under `-WorkRoot`, applies `references\remote-control-native-replacement.patch`, builds `codex-cli` for `x86_64-pc-windows-msvc` with Rust `1.95.0-x86_64-pc-windows-msvc` and profile `dev-small`, and verifies native markers before printing `ReplacementResourceCodexExe`. Do not use GNU toolchain output for Windows MSIX replacement; use the MSVC target.
 
 Run a dry run first. Do not pass `-KeepWorkDir` unless you need to inspect failed patch artifacts; successful dry-runs should clean generated package and ASAR extraction output:
 
@@ -164,9 +172,17 @@ Only after dry-run markers pass, install and relaunch:
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -Install -Launch -InstallPrerequisites -ReplacementResourceCodexExe "<path-to-built-codex.exe>"
 ```
 
-Cleanup policy: successful remote-control script runs delete generated MSIX staging directories, ASAR extracts, script-local `npx` cache, installed patched `.msix` artifacts, and temporary Windows SDK BuildTools. Keep only reusable inputs such as the patched native `codex.exe` build, source checkout, auth/config/sqlite state, and explicit backups. Use `-KeepWorkDir` only for a failed or actively debugged run.
+If an install attempt is interrupted after uninstall/signing and `Get-AppxPackage -Name OpenAI.Codex` returns no package, do not rebuild first. Install the existing patched MSIX from the selected `-OutputRoot` if it exists:
 
-After installing Phone Remote Control, verify that ordinary features survived the remote-control repack. At minimum check live ASAR markers for remote control and browser local-patched availability, run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly`, run `codex plugin list`, run the Windows sandbox smoke test, and verify the Chrome native messaging manifest points at a stable cache version path rather than `.tmp` or `latest`. If the strict check reports a stale Chrome native-host manifest or missing bundled cache, run `scripts\install-computer-use-local.ps1 -VerifyOnly`, then rerun `-StrictVerifyOnly`.
+```powershell
+Add-AppxPackage -Path "<large-local-build-root>\OpenAI.Codex_<version>_remote-control-patched.msix" -ForceApplicationShutdown -Verbose
+```
+
+Cleanup policy: successful remote-control script runs delete generated MSIX staging directories, ASAR extracts, script-local `npx` cache, installed patched `.msix` artifacts, and temporary Windows SDK BuildTools. If the user only asked for the repair and did not ask to keep reusable build outputs, also remove the native source checkout, Cargo/Rustup caches, target directory, temp directory, and generated patch/MSIX files created only for this repair. Keep the installed patched package, `.codex\remote.json`, `.codex\remote-control-oauth.json`, auth/config/sqlite state, logs, and explicit backups.
+
+After installing Phone Remote Control, verify that ordinary features survived the remote-control repack. At minimum check live ASAR markers for remote control and browser local-patched availability, live native markers when a replacement binary was used, run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly`, run `codex plugin list`, run the Windows sandbox smoke test, and verify the Chrome native messaging manifest points at a stable cache version path rather than `.tmp` or `latest`. If the strict check reports a stale Chrome native-host manifest or missing bundled cache, run `scripts\install-computer-use-local.ps1 -VerifyOnly`, then rerun `-StrictVerifyOnly`.
+
+When reading shared log databases, distinguish the running WindowsApps app-server process from old extension app-server processes. A stale Antigravity/VS Code extension `codex.exe` can continue logging `API key auth is not supported` after the WindowsApps package is fixed; filter by process path or `pid` before declaring the repair failed.
 
 If phone-created turns reach Desktop but fail against the wrong model API endpoint, inspect the concrete request URL, `config.toml`, and the affected thread/session metadata before changing anything. Treat this as a post-pairing configuration diagnosis, not as part of remote-control pairing. Preserve conversation history and do not change `model_provider` ids just to change a URL.
 
@@ -332,6 +348,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 
 Phone remote-control script options:
 
+- `scripts\build-remote-control-native-replacement.ps1 -WorkRoot <path>`: clone/patch/build the native replacement under the selected work root, keeping Cargo/Rustup/temp/target/source artifacts off the system drive when requested.
 - `scripts\patch-remote-control-windows-msix.ps1 -DryRun`: patch and validate extracted package without installing, then clean successful generated artifacts.
 - `-KeepWorkDir`: keep MSIX staging, ASAR extract, and script-local `npx` cache for debugging; avoid this on routine repairs because each kept run can consume multiple GB.
 - `-OutputRoot <path>`: optional large local build root; use it when the default temp/output drive is short on space.
